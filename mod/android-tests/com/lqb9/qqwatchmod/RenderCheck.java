@@ -15,13 +15,25 @@ import java.util.List;
 
 /** Isolated offscreen native rendering. Never opens a window or operates QQ. */
 public class RenderCheck extends Instrumentation {
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    private boolean selectorsOnly;
+    @Override public void onCreate(Bundle arguments) {
+        super.onCreate(arguments);
+        selectorsOnly = arguments != null && "selectors".equals(arguments.getString("mode"));
+        start();
+    }
     @Override public void onStart() {
         final Bundle result = new Bundle();
         try {
             runOnMainSync(new Runnable() {
                 public void run() {
                     try {
+                        renderSelector("cores-selected", 360, 1f, 255);
+                        renderSelector("cores-mixed", 360, 1f, 247);
+                        renderSelector("cores-narrow-font", 260, 1.6f, 15);
+                        if (selectorsOnly) {
+                            result.putString("stream", "PASS 3 native core selector renders and click state checks; no foreground window opened\n");
+                            return;
+                        }
                         render("normal", 360, 1f, false, false, false);
                         render("narrow", 300, 1f, false, false, false);
                         render("large-font", 360, 1.3f, false, false, false);
@@ -35,6 +47,31 @@ public class RenderCheck extends Instrumentation {
             });
             finish(-1, result);
         } catch (Throwable e) { result.putString("stream", "FAILED " + e); finish(1, result); }
+    }
+    private void renderSelector(String name, int widthDp, float fontScale, int mask) throws Exception {
+        Configuration config = new Configuration(getTargetContext().getResources().getConfiguration());
+        config.fontScale = fontScale;
+        Context context = getTargetContext().createConfigurationContext(config);
+        CoreSelectorView selector = new CoreSelectorView(context, mask);
+        View first = ((android.view.ViewGroup) selector.getChildAt(0)).getChildAt(0);
+        first.performClick();
+        if (selector.getMask() != (mask ^ 1)) throw new AssertionError("Core selection did not toggle");
+        first.performClick();
+        if (selector.getMask() != mask) throw new AssertionError("Core selection did not restore");
+        android.view.accessibility.AccessibilityNodeInfo info = android.view.accessibility.AccessibilityNodeInfo.obtain();
+        first.onInitializeAccessibilityNodeInfo(info);
+        if (!info.isCheckable() || info.isChecked() != ((mask & 1) != 0)) throw new AssertionError("Core accessibility state incorrect");
+        info.recycle();
+        int width = DashboardView.dp(context, widthDp);
+        selector.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        selector.layout(0, 0, width, selector.getMeasuredHeight());
+        if (first.getHeight() < DashboardView.dp(context, 48)) throw new AssertionError("Core touch target too small");
+        Bitmap bitmap = Bitmap.createBitmap(width, selector.getHeight(), Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap); canvas.drawColor(0xFFFFFFFF); selector.draw(canvas);
+        try (FileOutputStream out = new FileOutputStream(new File(getTargetContext().getCacheDir(), name + ".png"))) {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+        }
+        bitmap.recycle();
     }
     private void render(String name, int widthDp, float fontScale, boolean stale, boolean missing, boolean high) throws Exception {
         Configuration config = new Configuration(getTargetContext().getResources().getConfiguration());
@@ -60,6 +97,11 @@ public class RenderCheck extends Instrumentation {
         CpuLoadMonitor.Sample sample = new CpuLoadMonitor.Sample(new CpuLoadMonitor.Settings(true, 200, 0, 1, "record"),
                 60000, missing ? -1 : high ? 245.3 : 87.4, 1000, false, high ? "reported" : "normal");
         dashboard.update(sample, processes, threads, frequencies, history.snapshot(), true, stale ? 15 : 0, stale);
+        double[] cores = missing ? new double[]{-1,-1,-1,-1,-1,-1,-1,-1} : high ? new double[]{66.3,63.3,62.2,53.5,5,4,1,0} : new double[]{33,25,20,9.4,5,4,1,0};
+        CoreSnapshot coreSnapshot = new CoreSnapshot("demo",10265,1,60000,60000000000L,!missing,0,"演示数据",new long[8],Collections.<CoreSnapshot.Counter>emptyList());
+        List<CoreTracker.Detail> coreHot = new ArrayList<CoreTracker.Detail>();
+        for (int i=0;i<4;i++) coreHot.add(new CoreTracker.Detail(new CoreSnapshot.Counter(22644,100,20628+i,100,"pool-40-thread-",new long[8]),cores[i]));
+        dashboard.updateScope(new CoreTracker.Result(missing ? -1 : high ? 245.3 : 87.4,cores,coreSnapshot,59000000000L,coreHot,"演示数据 · 所选核心实际时间"),15,stale);
         int width = DashboardView.dp(context, widthDp);
         dashboard.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
         dashboard.layout(0, 0, width, dashboard.getMeasuredHeight());
@@ -70,5 +112,16 @@ public class RenderCheck extends Instrumentation {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
         }
         bitmap.recycle();
+        ProcessingHistory status = new ProcessingHistory();
+        String[] states = {"待确认", "任务已结束", "仍在运行", "无法处理"};
+        for (int i=0;i<4;i++) status.add(new ProcessingHistory.Row("demo"+i,System.currentTimeMillis(),
+                new CoreSnapshot.Counter(23430,100,27049+i,200,i==3 ? "GifRenderingExe" : "pool-40-thread-",new long[8]),15,253.9,62.1,
+                "QQ 后台超限",states[i],"演示处理状态"));
+        StatusTableView table = new StatusTableView(context);table.update(status);
+        table.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));
+        table.layout(0,0,width,table.getMeasuredHeight());
+        Bitmap statusBitmap=Bitmap.createBitmap(width,table.getHeight(),Bitmap.Config.ARGB_8888);Canvas statusCanvas=new Canvas(statusBitmap);
+        statusCanvas.drawColor(0xFFFFFFFF);table.draw(statusCanvas);
+        try(FileOutputStream out=new FileOutputStream(new File(getTargetContext().getCacheDir(),name+"-status.png"))) {statusBitmap.compress(Bitmap.CompressFormat.PNG,100,out);}statusBitmap.recycle();
     }
 }

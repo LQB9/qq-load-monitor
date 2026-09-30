@@ -35,7 +35,7 @@ public class WatchPanel {
         header.setPadding(dp(ctx, 18), dp(ctx, 10), dp(ctx, 8), dp(ctx, 9));
         header.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{PINK, 0xFFFF92BD}));
         LinearLayout titles = column(ctx);
-        TextView title = text(ctx, "QQ 负载监控", 18, 0xFFFFFFFF);
+        TextView title = text(ctx, "QQ负载监控", 18, 0xFFFFFFFF);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD); titles.addView(title);
         TextView subtitle = text(ctx, "实时图表 · v" + WatchModule.VERSION, 11, 0xFFFFFFFF);
         subtitle.setPadding(0, dp(ctx, 4), 0, 0); titles.addView(subtitle);
@@ -48,19 +48,19 @@ public class WatchPanel {
 
         LinearLayout nav = row(ctx); nav.setPadding(dp(ctx, 14), dp(ctx, 10), dp(ctx, 14), dp(ctx, 2)); frame.addView(nav);
         LinearLayout pages = column(ctx); frame.addView(pages, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        final ScrollView[] scrolls = new ScrollView[3]; final TextView[] tabs = new TextView[3];
-        String[] names = {"概览", "明细", "设置"};
-        for (int i = 0; i < 3; i++) {
+        final ScrollView[] scrolls = new ScrollView[4]; final TextView[] tabs = new TextView[4];
+        String[] names = {"概览", "明细", "处理", "设置"};
+        for (int i = 0; i < 4; i++) {
             final int index = i;
             tabs[i] = button(ctx, names[i], 0, SUB, new View.OnClickListener() {
                 public void onClick(View v) {
-                    for (int j = 0; j < 3; j++) {
+                    for (int j = 0; j < 4; j++) {
                         scrolls[j].setVisibility(j == index ? View.VISIBLE : View.GONE); paintTab(ctx, tabs[j], j == index);
                     }
                 }
             });
             LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(0, dp(ctx, 44), 1);
-            if (i < 2) tabParams.rightMargin = dp(ctx, 5); nav.addView(tabs[i], tabParams);
+            if (i < 3) tabParams.rightMargin = dp(ctx, 5); nav.addView(tabs[i], tabParams);
             scrolls[i] = new ScrollView(ctx); scrolls[i].setFillViewport(true);
             pages.addView(scrolls[i], new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             scrolls[i].setVisibility(i == 0 ? View.VISIBLE : View.GONE); paintTab(ctx, tabs[i], i == 0);
@@ -97,7 +97,7 @@ public class WatchPanel {
         });
         LinearLayout.LayoutParams exportParams = DashboardView.match(); exportParams.topMargin = dp(ctx, 10);
         logCard.addView(export, exportParams); logCard.addView(exportState);
-        LinearLayout processCard = DashboardView.card(ctx, detail, "QQ 进程 CPU", "单核 = 100%");
+        LinearLayout processCard = DashboardView.card(ctx, detail, "QQ 进程 CPU", "全部核心 · 参考值");
         final CpuCharts.Ranking processChart = new CpuCharts.Ranking(ctx, false, 128); processCard.addView(processChart, DashboardView.match());
         LinearLayout threadCard = DashboardView.card(ctx, detail, "热点线程 TOP 12", "单线程 0—100%");
         final CpuCharts.Ranking threadChart = new CpuCharts.Ranking(ctx, true, 12); threadCard.addView(threadChart, DashboardView.match());
@@ -112,7 +112,11 @@ public class WatchPanel {
         LinearLayout eventCard = DashboardView.card(ctx, detail, "最近事件", "最多显示 8 条");
         final TextView events = text(ctx, "", 11, SUB); eventCard.addView(events);
 
-        LinearLayout settingsPage = page(ctx); scrolls[2].addView(settingsPage);
+        LinearLayout handlingPage = page(ctx); scrolls[2].addView(handlingPage);
+        LinearLayout statusCard = DashboardView.card(ctx, handlingPage, "处理状态", "实际结果");
+        final StatusTableView statusTable = new StatusTableView(ctx); statusCard.addView(statusTable, DashboardView.match());
+        statusCard.addView(hint(ctx, "优先定位所选核心占用最高的工作线程，只尝试停止覆盖采样窗口的 Java 任务。原生线程需专用停止接口。"));
+        LinearLayout settingsPage = page(ctx); scrolls[3].addView(settingsPage);
         LinearLayout settingsCard = DashboardView.card(ctx, settingsPage, "监控设置", "保存后生效");
         final TextView toggle = button(ctx, "", 0xFFEAF7F2, 0xFF1B9073, new View.OnClickListener() {
             public void onClick(View v) {
@@ -121,27 +125,34 @@ public class WatchPanel {
             }
         }); settingsCard.addView(toggle, DashboardView.match());
         CpuLoadMonitor.Settings initial = WatchModule.readSettings();
-        final EditText cpu = input(ctx, settingsCard, "QQ 总 CPU 提示阈值（%）", initial.threshold);
+        final EditText cpu = input(ctx, settingsCard, "所选核心的 QQ 合计阈值（%）", initial.threshold);
         settingsCard.addView(hint(ctx, "单核满载 100%；200% 相当于占用两个核心。"));
-        final EditText duration = input(ctx, settingsCard, "超限持续时长（秒）", initial.durationSeconds);
-        settingsCard.addView(hint(ctx, "0 秒：首轮有效超限采样即记录并提示。"));
+        settingsCard.addView(text(ctx, "监控核心（至少勾选一个）", 12, INK));
+        final CoreSelectorView selectedCores = new CoreSelectorView(ctx, initial.coreMask);
+        settingsCard.addView(selectedCores, DashboardView.match());
         final EditText interval = input(ctx, settingsCard, "采样间隔（秒）", initial.intervalSeconds);
         settingsCard.addView(hint(ctx, "图表保留最近 60 次采样，横轴按实际时间显示。"));
         TextView save = button(ctx, "保存设置", PINK, 0xFFFFFFFF, new View.OnClickListener() {
             public void onClick(View v) {
-                int threshold = number(cpu, WatchModule.DEF_CPU, 1, 10000), seconds = number(duration, WatchModule.DEF_DURATION, 0, 3600);
+                int threshold = number(cpu, WatchModule.DEF_CPU, 1, 10000), seconds = 0;
+                int mask = selectedCores.getMask();
+                if (mask == 0) { toast(ctx, "请至少选择一个核心"); return; }
                 int step = number(interval, WatchModule.DEF_IV, 1, 3600);
-                if (seconds > 0 && seconds < step) { toast(ctx, "持续时长应不小于采样间隔"); return; }
-                CpuLoadMonitor.Settings settings = new CpuLoadMonitor.Settings(WatchModule.on(), threshold, seconds, step, "record");
+                CpuLoadMonitor.Settings settings = new CpuLoadMonitor.Settings(WatchModule.on(), threshold, seconds, step, "stop_task", mask);
                 if (!WatchModule.saveSettings(settings)) { toast(ctx, "保存失败，请重试"); return; }
-                cpu.setText(String.valueOf(threshold)); duration.setText(String.valueOf(seconds)); interval.setText(String.valueOf(step));
-                WatchModule.push("保存阈值=" + threshold + "% 持续=" + seconds + "秒 采样=" + step + "秒");
+                cpu.setText(String.valueOf(threshold)); interval.setText(String.valueOf(step));
+                WatchModule.push("保存阈值=" + threshold + "% 核心=" + CoreSnapshot.selection(mask) + " 采样=" + step + "秒");
                 WatchModule.requestSample(); toast(ctx, "已保存，下次采样生效");
             }
         });
         LinearLayout.LayoutParams saveParams = DashboardView.match(); saveParams.topMargin = dp(ctx, 14); settingsCard.addView(save, saveParams);
-        LinearLayout explain = DashboardView.card(ctx, settingsPage, "图表怎么看", "仅记录并提示");
-        explain.addView(text(ctx, "粉色折线：QQ 总 CPU 占用，可超过 100%。\n红色虚线：总 CPU 提示阈值。\n蓝色核心条：当前频率，单位 MHz。\n线程排行：各线程 CPU，占满一个核心为 100%。\n\n当前未采集逐核占用率；频率条不表示核心负载。缺失采样留空，过期读数变灰。", 12, SUB));
+        settingsCard.addView(hint(ctx, "前台和后台共用阈值；严格超过阈值时，在首轮有效采样立即尝试处理。可中断任务未响应时不会强杀进程。"));
+        settingsCard.addView(button(ctx, "打开模块 · 启动精确核心采集", 0xFFF3F5FA, SUB, v -> {
+            try { ctx.startActivity(new android.content.Intent().setClassName("com.lqb9.qqwatchmod", "com.lqb9.qqwatchmod.MainActivity")); }
+            catch (Exception unavailable) { toast(ctx, "请从桌面打开 QQ负载监控并启动精确采集"); }
+        }), DashboardView.match());
+        LinearLayout explain = DashboardView.card(ctx, settingsPage, "图表怎么看", "单核 = 100%");
+        explain.addView(text(ctx, "大数字与折线：仅 QQ 在所选核心上的合计占用。\n逐核百分比：QQ 在各核心上的实际 CPU 时间，圆点表示勾选核心。\n频率条：MHz，独立于占用率。\n进程明细：全部核心上的 QQ 进程 CPU，供参考。\n\n精确采集需要 root 和内核调度统计支持；缺失、过期、丢事件或前后台未知时暂停处理。处理表仅在当前会话保留，不导出。", 12, SUB));
         addLegacy(ctx, settingsPage);
         frame.addView(button(ctx, "打开 QQ 增强面板", 0xFFFFFFFF, SUB, new View.OnClickListener() {
             public void onClick(View v) {
@@ -166,6 +177,7 @@ public class WatchPanel {
                 try {
                     refresh(dashboard, processChart, threadChart, detailNote, threadInfo, events, toggle);
                     DashboardView.set(logState, WatchLog.status());
+                    statusTable.update(TaskBridge.history);
                     boolean busy = WatchLog.isExporting(); export.setEnabled(!busy); export.setAlpha(busy ? 0.6f : 1);
                     export.setText(busy ? "正在导出…" : "导出日志到下载目录");
                 } catch (Throwable ignored) {}
@@ -194,9 +206,10 @@ public class WatchPanel {
         QqCpuTracker.Snapshot processes = data == null ? new QqCpuTracker.Snapshot(-1, 0, 0, Collections.<QqCpuTracker.Detail>emptyList(), "等待采样") : data.processes;
         dashboard.update(sample, processes, threads, data == null ? Collections.<CoreFrequency.Core>emptyList() : data.frequencies,
                 data == null ? Collections.<LoadHistory.Point>emptyList() : data.history, enabled, age, stale);
+        dashboard.updateScope(data == null ? null : data.core, sample == null ? WatchModule.readSettings().coreMask : sample.settings.coreMask, stale);
         processesChart.update(DashboardView.processRanks(processes), stale); threadsChart.update(DashboardView.threadRanks(threads), stale);
         DashboardView.set(note, (stale ? "上次采样已过期 · " : "") + processes.processes.size() + " 个 QQ 进程 · " + threads.scanned + " 个线程已扫描\n"
-                + (processes.note.isEmpty() ? "单核满载 = 100% · 仅记录并提示" : processes.note));
+                + (data == null || data.core == null ? "等待精确采集" : data.core.note));
         StringBuilder complete = new StringBuilder();
         for (ThreadCpuTracker.Detail t : threads.threads) complete.append('\n').append(t.reading.name).append("\nCPU ")
                 .append(t.cpu < 0 ? "—" : CpuCharts.percent(t.cpu)).append(" · PID ").append(t.reading.pid).append(" · TID ").append(t.reading.tid)

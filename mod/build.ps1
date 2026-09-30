@@ -116,5 +116,8 @@ RunExe "$bt\apksigner.bat" @(
 ) 'apksigner' | Out-Null
 RunExe "$bt\apksigner.bat" @('verify', '--print-certs', "$out\qqwatchmod.apk") 'verify' | Out-Null
 
+# Keep the internal path for existing tools; publish the user-facing APK name.
+$releaseName = 'QQ' + [char]0x8D1F + [char]0x8F7D + [char]0x76D1 + [char]0x63A7 + '.apk'
+Copy-Item -LiteralPath "$out\qqwatchmod.apk" -Destination (Join-Path $out $releaseName) -Force
 Write-Host "BUILD OK"
-Get-Item "$out\qqwatchmod.apk" | Select-Object FullName, Length | Format-Table -AutoSize
+Get-Item (Join-Path $out $releaseName) | Select-Object FullName, Length | Format-Table -AutoSize

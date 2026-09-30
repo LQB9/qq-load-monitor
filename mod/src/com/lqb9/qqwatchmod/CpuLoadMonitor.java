@@ -8,21 +8,27 @@ final class CpuLoadMonitor {
         final int durationSeconds;
         final int intervalSeconds;
         final String action;
+        final int coreMask;
 
         Settings(boolean enabled, int threshold, int durationSeconds, int intervalSeconds,
                  String action) {
+            this(enabled, threshold, durationSeconds, intervalSeconds, action, 255);
+        }
+        Settings(boolean enabled, int threshold, int durationSeconds, int intervalSeconds,
+                 String action, int coreMask) {
             this.enabled = enabled;
             this.threshold = clamp(threshold, 1, 10000);
             this.durationSeconds = clamp(durationSeconds, 0, 3600);
             this.intervalSeconds = clamp(intervalSeconds, 1, 3600);
-            this.action = "record";
+            this.action = "stop_task".equals(action) ? "stop_task" : "record";
+            this.coreMask = coreMask > 0 && coreMask <= 255 ? coreMask : 255;
         }
 
         boolean sameAs(Settings other) {
             return other != null && enabled == other.enabled && threshold == other.threshold
                     && durationSeconds == other.durationSeconds
                     && intervalSeconds == other.intervalSeconds
-                    && action.equals(other.action);
+                    && action.equals(other.action) && coreMask == other.coreMask;
         }
 
         private static int clamp(int value, int low, int high) {
@@ -96,7 +102,7 @@ final class CpuLoadMonitor {
             return new Sample(settings, nowMs, cpu, 0, false, state);
         }
 
-        if (cpu < settings.threshold) {
+        if (cpu <= settings.threshold) {
             clearStreak();
             return new Sample(settings, nowMs, cpu, 0, false, "normal");
         }

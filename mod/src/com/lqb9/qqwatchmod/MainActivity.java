@@ -49,12 +49,12 @@ public class MainActivity extends Activity {
         hg.setCornerRadii(new float[]{0, 0, 0, 0, dp(20), dp(20), dp(20), dp(20)});
         head.setBackgroundDrawable(hg);
         TextView h1 = new TextView(this);
-        h1.setText("QQ 看门狗");
+        h1.setText("QQ负载监控");
         h1.setTextSize(22f);
         h1.setTextColor(0xFFFFFFFF);
         head.addView(h1);
         TextView h2 = new TextView(this);
-        h2.setText("模块 " + ver() + "  ·  CPU 趋势、核心频率与线程排行");
+        h2.setText("模块 " + ver() + "  ·  核心负载与任务处理");
         h2.setTextSize(12.5f);
         h2.setTextColor(0xFFFFFFFF);
         h2.setAlpha(0.92f);
@@ -65,15 +65,30 @@ public class MainActivity extends Activity {
         LinearLayout c1 = card();
         c1.addView(row("1", "在 LSPosed 里启用本模块", "作用域勾上「QQ」，勾完强行停止 QQ 再打开"));
         c1.addView(div());
-        c1.addView(row("2", "打开 QQ，长按主界面右上角的「+」", "如果先出现 QQ 增强面板，从「实验」组进入看门狗；设置 CPU 阈值后打开监控"));
+        c1.addView(row("2", "打开 QQ，长按主界面右上角的「+」", "如果先出现 QQ 增强面板，从「实验」组进入负载监控；设置 CPU 阈值后打开监控"));
         root.addView(c1);
+
+        root.addView(sec("精确核心采集（需要 root）"));
+        LinearLayout collector = card();
+        final TextView collectorState = new TextView(this);
+        collectorState.setText("采集 QQ 在 CPU 0—7 上的实际运行时间。仅开启监控开关不足以启动精确采集。手机重启后需重新启动采集。");
+        collectorState.setTextColor(SUB); collectorState.setTextSize(13); collector.addView(collectorState);
+        android.widget.Button startCollector = new android.widget.Button(this); startCollector.setText("启动精确核心采集");
+        startCollector.setOnClickListener(v -> {
+            collectorState.setText("等待 root 授权与内核检查…");
+            RootControl.start(getApplicationContext(), message -> runOnUiThread(() -> collectorState.setText(message)));
+        }); collector.addView(startCollector);
+        android.widget.Button stopCollector = new android.widget.Button(this); stopCollector.setText("停止精确核心采集");
+        stopCollector.setOnClickListener(v -> RootControl.stop(message -> runOnUiThread(() -> collectorState.setText(message))));
+        collector.addView(stopCollector); root.addView(collector);
 
         root.addView(sec("新版图表面板"));
         LinearLayout charts = card();
         charts.addView(para("概览：CPU 大数字与最近 60 次采样折线、核心频率条形图、热点线程 TOP 4。\n"
                 + "明细：日志导出、全部 QQ 进程 CPU、热点线程 TOP 12 和最近事件。\n"
-                + "设置：监控开关、提示阈值和采样间隔。\n\n"
-                + "图表横轴使用实际采样时间，缺失数据留空，过期读数变灰。核心条的单位是 MHz，当前尚未采集逐核占用率。"));
+                + "处理：时间、线程、触发负载、实际结果的表格，可展开详情，不导出。\n"
+                + "设置：监控开关、CPU 0—7 任意组合、合计阈值和采样间隔。\n\n"
+                + "百分比图只统计 QQ 在所选核心上的实际 CPU 时间；MHz 图单独显示频率。缺失或过期时暂停处理。"));
         root.addView(charts);
 
         root.addView(sec("日志记录与导出"));
@@ -91,9 +106,10 @@ public class MainActivity extends Activity {
                 + "线程名、PID、TID、CPU 占用和最后运行核心。线程数量仅供查看，不参与负载判定。\n\n"
                 + "单核满载 = 100%，QQ 总负载 200%~300% 表示约占用 2~3 个核心。"
                 + "4 个核心全部满载是 400%，不会按整部手机折算成 0~100%。"));
-        c2.addView(para("默认每 1 秒采样，总 CPU 达到 200% 即记录热点线程并提示。"
-                + "持续时长设为 0 表示首轮有效超限采样即提示；可自行改成持续数秒才提示。"
-                + "每次连续超限只提示一次，恢复正常后可再次提示。当前版本不终结线程或进程。"));
+        c2.addView(para("默认每 1 秒采样，所选核心的 QQ 合计 CPU 严格超过 200% 即尝试处理，阈值可改。"
+                + "前台与后台共用阈值，后台超限也立即尝试处理，不额外等待持续数秒。"
+                + "优先定位占用最高的工作线程；只请求取消覆盖该窗口的 Java 任务，并确认任务是否结束。"
+                + "任务不响应中断、原生线程没有专用停止接口时显示实际限制，不强杀 QQ 进程。"));
         c2.addView(para("核心频率单独显示：优先硬件读数，取不到时显示驱动请求频率。"
                 + "读不到就写「频率不可读」。1100 MHz 与 CPU 占用是两个指标，"
                 + "不能单凭某个频率判定线程异常。线程会迁移，「最后核心」不是整个采样窗口都在那个核心。"));
@@ -106,9 +122,9 @@ public class MainActivity extends Activity {
                 + "watchdog.on      存在 = 开（默认不开，面板里点一下）\n"
                 + "watchdog.load    整组负载设置\n\n"
                 + "cpu=200         单核百分比阈值\n"
-                + "duration=0      超限持续秒数\n"
+                + "cores=255       核心选择位掩码（0—7 全选）\n"
                 + "interval=1      采样间隔秒\n"
-                + "action=record   仅记录并提示"));
+                + "action=stop_task 请求合作停止任务"));
         c3.addView(para("改设置后下次采样生效，并重新累计超限时间。"
                 + "旧 watchdog.base / .k / .scope 不再参与判定；"
                 + "首次升级如果存在 watchdog.iv，则沿用原采样间隔。最近事件最多保留 20 条，QQ 重启后清空。"));

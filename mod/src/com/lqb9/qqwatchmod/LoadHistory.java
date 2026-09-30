@@ -20,6 +20,7 @@ final class LoadHistory {
     }
 
     private final ArrayDeque<Point> points = new ArrayDeque<Point>();
+    synchronized void clear() { points.clear(); }
 
     synchronized void add(long elapsedMs, double cpu, int intervalSeconds) {
         Point last = points.peekLast();

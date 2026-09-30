@@ -13,7 +13,7 @@ import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 
 /**
- * QQ 看门狗 v1.15：主进程汇总 QQ 同 UID 所有进程的 CPU 消耗，并保留滚动日志。
+ * QQ负载监控：仅采集 QQ 的 CPU 消耗，按所选核心判定，并保留滚动日志。
  * CPU% = 所有 QQ 进程 CPU 时间增量 / 单调时间增量 × 100；单核满载=100%。
  * 汇总负载、线程热点和当前频率，只记录并提示，不结束进程。
  * watchdog.on 沿用总开关，watchdog.load 原子保存整组负载设置。
@@ -23,7 +23,7 @@ import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 public class WatchModule extends XposedModule {
 
     static final String TAG = "[QQWATCH]";
-    static final String VERSION = "1.15";
+    static final String VERSION = "1.17";
     static final String SW = "/sdcard/Android/data/com.tencent.mobileqq/files";
 
     static final String F_ON = "watchdog.on";
@@ -44,13 +44,19 @@ public class WatchModule extends XposedModule {
         final ThreadCpuTracker.Snapshot threads;
         final java.util.List<CoreFrequency.Core> frequencies;
         final java.util.List<LoadHistory.Point> history;
+        final CoreTracker.Result core;
         LoadStatus(CpuLoadMonitor.Sample sample, QqCpuTracker.Snapshot processes,
                    ThreadCpuTracker.Snapshot threads, java.util.List<CoreFrequency.Core> frequencies) {
+            this(sample, processes, threads, frequencies, null);
+        }
+        LoadStatus(CpuLoadMonitor.Sample sample, QqCpuTracker.Snapshot processes,
+                   ThreadCpuTracker.Snapshot threads, java.util.List<CoreFrequency.Core> frequencies, CoreTracker.Result core) {
             this.sample = sample;
             this.processes = processes;
             this.threads = threads;
             this.frequencies = frequencies;
             this.history = loadHistory.snapshot();
+            this.core = core;
         }
     }
     static volatile LoadStatus latest;
@@ -62,6 +68,8 @@ public class WatchModule extends XposedModule {
     private static final java.util.concurrent.atomic.AtomicBoolean watchStarted =
             new java.util.concurrent.atomic.AtomicBoolean();
     private static final java.util.concurrent.atomic.AtomicBoolean summonHooked =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static final java.util.concurrent.atomic.AtomicBoolean tasksHooked =
             new java.util.concurrent.atomic.AtomicBoolean();
     private static final Object sampleWake = new Object();
 
@@ -85,12 +93,13 @@ public class WatchModule extends XposedModule {
         try {
             selfName = procName();
             isMain = "com.tencent.mobileqq".equals(selfName);
-            if (isMain) WatchLog.start(new File(SW, "watchdog-logs"), "QQ 看门狗 v" + VERSION
+            if (isMain) WatchLog.start(new File(SW, "watchdog-logs"), "QQ负载监控 v" + VERSION
                     + " pid=" + android.os.Process.myPid() + " process=" + selfName
                     + " Android=" + android.os.Build.VERSION.RELEASE + " SDK=" + android.os.Build.VERSION.SDK_INT
                     + " device=" + android.os.Build.MANUFACTURER + "/" + android.os.Build.MODEL
-                    + " 单核满载=100% action=record");
+                    + " 单核满载=100% action=stop_task");
             say(TAG + " packageReady " + selfName);
+            hookTasks();
             if (isMain) {
                 hookSummon();
                 startWatchdog();
@@ -111,6 +120,46 @@ public class WatchModule extends XposedModule {
 
     // ==================== 看门狗 ====================
 
+    private void hookTasks() {
+        if (!tasksHooked.compareAndSet(false, true)) return;
+        final ThreadLocal<TaskRegistry.Entry> poolTask = new ThreadLocal<TaskRegistry.Entry>();
+        try {
+            hook(android.app.Application.class.getDeclaredMethod("attach", android.content.Context.class)).intercept(new Hooker() {
+                public Object intercept(Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    try { TaskBridge.attach((android.app.Application) chain.getThisObject()); } catch (Throwable failure) { say(TAG + " control attach " + failure); }
+                    return result;
+                }
+            });
+            try {
+                Class<?> activityThread = Class.forName("android.app.ActivityThread");
+                android.app.Application app = (android.app.Application) activityThread.getDeclaredMethod("currentApplication").invoke(null);
+                if (app != null) TaskBridge.attach(app);
+            } catch (Throwable ignored) {}
+            for (String method : new String[]{"run", "runAndReset"}) {
+                hook(java.util.concurrent.FutureTask.class.getDeclaredMethod(method)).intercept(new Hooker() {
+                    public Object intercept(Chain chain) throws Throwable {
+                        TaskRegistry.Entry task = TaskBridge.tasks.begin(android.os.Process.myTid(), Thread.currentThread(), chain.getThisObject(), System.nanoTime());
+                        try { return chain.proceed(); } finally { TaskBridge.tasks.end(task); }
+                    }
+                });
+            }
+            hook(java.util.concurrent.ThreadPoolExecutor.class.getDeclaredMethod("beforeExecute", Thread.class, Runnable.class)).intercept(new Hooker() {
+                public Object intercept(Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    poolTask.set(TaskBridge.tasks.begin(android.os.Process.myTid(), Thread.currentThread(), chain.getArg(1), System.nanoTime()));
+                    return result;
+                }
+            });
+            hook(java.util.concurrent.ThreadPoolExecutor.class.getDeclaredMethod("afterExecute", Runnable.class, Throwable.class)).intercept(new Hooker() {
+                public Object intercept(Chain chain) throws Throwable {
+                    try { return chain.proceed(); } finally { TaskBridge.tasks.end(poolTask.get()); poolTask.remove(); }
+                }
+            });
+            say(TAG + " task hooks ready");
+        } catch (Throwable error) { say(TAG + " task hooks unavailable " + error); }
+    }
+
     private void startWatchdog() {
         if (!watchStarted.compareAndSet(false, true)) return;
         startedAt = android.os.SystemClock.elapsedRealtime();
@@ -119,12 +168,15 @@ public class WatchModule extends XposedModule {
                 CpuLoadMonitor monitor = new CpuLoadMonitor();
                 QqCpuTracker tracker = new QqCpuTracker();
                 ThreadCpuTracker threadTracker = new ThreadCpuTracker();
+                CoreTracker coreTracker = new CoreTracker();
                 long lastErrorMs = -60000L;
                 long lastLogSampleMs = -1L;
                 CpuLoadMonitor.Settings loggedSettings = null;
+                int historyMask = 0;
                 while (true) {
                     try {
                         CpuLoadMonitor.Settings settings = readSettings();
+                        if (historyMask != settings.coreMask) { loadHistory.clear(); historyMask = settings.coreMask; }
                         if (!settings.sameAs(loggedSettings)) {
                             loggedSettings = settings;
                             WatchLog.record("SETTINGS", settingsText(settings));
@@ -132,10 +184,20 @@ public class WatchModule extends XposedModule {
                         QqCpuTracker.Snapshot processes = collectCpu(tracker);
                         ThreadCpuTracker.Snapshot threads = collectThreads(threadTracker, processes);
                         java.util.List<CoreFrequency.Core> frequencies = CoreFrequency.read(processes.cores);
-                        CpuLoadMonitor.Sample sample = monitor.sample(processes.cpu,
-                                processes.elapsedMs, settings, startedAt + GUARD_MS);
+                        CoreSnapshot coreSnapshot = null;
+                        try { coreSnapshot = CoreSnapshot.decode(CoreCollector.read(new File(SW, CoreCollector.DATA))); }
+                        catch (Exception unavailable) {}
+                        CoreTracker.Result core = coreTracker.sample(coreSnapshot, settings.coreMask,
+                                android.os.Process.myUid(), processes.elapsedMs, settings.intervalSeconds);
+                        if (core == null) {
+                            TaskBridge.consider(null, settings);
+                            waitForSample(settings.intervalSeconds); continue;
+                        }
+                        CpuLoadMonitor.Sample sample = monitor.sample(core.cpu,
+                                coreSnapshot == null ? processes.elapsedMs : Math.min(processes.elapsedMs, coreSnapshot.elapsedMs), settings, startedAt + GUARD_MS);
                         loadHistory.add(sample.elapsedMs, sample.cpu, settings.intervalSeconds);
-                        latest = new LoadStatus(sample, processes, threads, frequencies);
+                        latest = new LoadStatus(sample, processes, threads, frequencies, core);
+                        if (settings.sameAs(readSettings())) TaskBridge.consider(core, settings);
                         if (lastLogSampleMs < 0 || sample.elapsedMs - lastLogSampleMs >= 5000L) {
                             lastLogSampleMs = sample.elapsedMs;
                             WatchLog.record("SAMPLE", snapshotText(latest));
@@ -144,10 +206,11 @@ public class WatchModule extends XposedModule {
                             // 决定执行前再核对完整配置，关闭/改阈值后不使用旧判定。
                             CpuLoadMonitor.Settings current = readSettings();
                             if (settings.sameAs(current)) {
-                                String what = "QQ 总 CPU 高负载 cpu=" + round1(sample.cpu)
+                                String what = "QQ 所选核心 CPU 高负载 cpu=" + round1(sample.cpu)
                                         + "% threshold=" + settings.threshold + "% 持续="
                                         + sample.highMs / 1000 + "秒 进程=" + processes.processes.size()
-                                        + " 核心=" + processes.cores;
+                                        + " 核心=" + CoreSnapshot.selection(settings.coreMask)
+                                        + " QQ=" + (coreSnapshot == null || coreSnapshot.foreground < 0 ? "未知" : coreSnapshot.foreground == 1 ? "前台" : "后台");
                                 alertCount++;
                                 push(what);
                                 say(TAG + " " + what);
@@ -175,6 +238,7 @@ public class WatchModule extends XposedModule {
                         monitor.reset();
                         tracker.reset();
                         threadTracker.reset();
+                        coreTracker.reset();
                         CpuLoadMonitor.Settings settings = readSettings();
                         long now = android.os.SystemClock.elapsedRealtime();
                         loadHistory.add(now, -1, settings.intervalSeconds);
@@ -317,9 +381,9 @@ public class WatchModule extends XposedModule {
         }
         boolean fresh = text.length() == 0;
         return new CpuLoadMonitor.Settings(on(),
-                settingInt(p, "cpu", DEF_CPU), settingInt(p, "duration", DEF_DURATION),
+                settingInt(p, "cpu", DEF_CPU), 0,
                 settingInt(p, "interval", fresh ? cfgInt(F_IV, DEF_IV) : DEF_IV),
-                p.getProperty("action", "record"));
+                "stop_task", settingInt(p, "cores", 255));
     }
 
     private static int settingInt(java.util.Properties p, String key, int fallback) {
@@ -330,6 +394,7 @@ public class WatchModule extends XposedModule {
     static boolean saveSettings(CpuLoadMonitor.Settings settings) {
         String data = "cpu=" + settings.threshold + "\nduration=" + settings.durationSeconds
                 + "\ninterval=" + settings.intervalSeconds
+                + "\ncores=" + settings.coreMask
                 + "\naction=" + settings.action + "\n";
         return cfgSet(F_LOAD, data);
     }
@@ -437,7 +502,7 @@ public class WatchModule extends XposedModule {
 
     private static String settingsText(CpuLoadMonitor.Settings settings) {
         return "监控=" + (settings.enabled ? "开启" : "关闭") + " 阈值=" + settings.threshold
-                + "% 持续=" + settings.durationSeconds + "秒 采样=" + settings.intervalSeconds + "秒 action=record";
+                + "% 核心=" + CoreSnapshot.selection(settings.coreMask) + " 采样=" + settings.intervalSeconds + "秒 action=" + settings.action;
     }
 
     private static String loadText(double cpu) { return cpu < 0 ? "不可用" : round1(cpu) + "%"; }
@@ -445,10 +510,17 @@ public class WatchModule extends XposedModule {
     static String snapshotText(LoadStatus data) {
         if (data == null) return "等待采样";
         StringBuilder text = new StringBuilder("elapsedMs=").append(data.sample.elapsedMs)
-                .append(" QQ总CPU=").append(loadText(data.sample.cpu)).append(" state=").append(data.sample.state)
+                .append(" QQ所选核心CPU=").append(loadText(data.sample.cpu)).append(" QQ全核心CPU=").append(loadText(data.processes.cpu))
+                .append(" 选择核心=").append(CoreSnapshot.selection(data.sample.settings.coreMask)).append(" state=").append(data.sample.state)
                 .append(" 超限持续Ms=").append(data.sample.highMs).append(" 进程数=").append(data.processes.processes.size())
                 .append(" 扫描线程数=").append(data.threads.scanned).append(" 线程读取错误=").append(data.threads.errors)
+                .append(" Java任务捕获次数=").append(TaskBridge.tasks.observed())
                 .append(" note=").append(data.processes.note);
+        if (data.core != null) {
+            text.append(" 核心采集=").append(data.core.note).append(" QQ前后台=")
+                    .append(data.core.snapshot == null ? -1 : data.core.snapshot.foreground);
+            for (int core=0;core<8;core++) text.append(" | CPU").append(core).append(" QQ占用=").append(loadText(data.core.cores[core]));
+        }
         for (QqCpuTracker.Detail process : data.processes.processes)
             text.append(" | 进程 pid=").append(process.reading.pid).append(' ').append(process.reading.name)
                     .append(" CPU=").append(loadText(process.cpu));
@@ -466,7 +538,7 @@ public class WatchModule extends XposedModule {
     static String exportHeader() {
         LoadStatus data = latest;
         long ageMs = data == null ? -1 : Math.max(0, android.os.SystemClock.elapsedRealtime() - data.sample.elapsedMs);
-        return "QQ 看门狗日志 v" + VERSION + "\n导出时间：" + new java.text.SimpleDateFormat(
+        return "QQ负载监控日志 v" + VERSION + "\n导出时间：" + new java.text.SimpleDateFormat(
                 "yyyy-MM-dd HH:mm:ss Z", java.util.Locale.ROOT).format(new java.util.Date())
                 + "\n设备：" + android.os.Build.MANUFACTURER + "/" + android.os.Build.MODEL
                 + " Android " + android.os.Build.VERSION.RELEASE + " SDK " + android.os.Build.VERSION.SDK_INT

@@ -1,95 +1,104 @@
-# QQ 负载监控（qq-load-monitor）
+# QQ负载监控
 
-自用的手机 QQ 负载监控模块（Xposed / libxposed API 102），目标 **QQ 9.2.85（vc 13860）**。
-**只记录、只提示，不杀进程、不 kill 线程。**
+当前交付版 **v1.17（versionCode 18）**，包名 `com.lqb9.qqwatchmod`，libxposed API 102。已在 Android 16、QQ 9.2.85（vc13860）验证构建、安装、采样及隔离任务控制；故障机的实际异常任务停止仍待验证。
 
-> 配套的另一个模块（QQ 增强：防撤回 / 闪照 / 语音转发 / 抢红包 …）在独立仓库 **`LQB9/qq-enhance`**（私有）。
-> 两个模块可以只装一个，也可以一起装；一起装时长按 QQ 右上角「+」出的是**增强面板**，本模块的面板从增强面板
-> 「实验 → 线程泄露看门狗」进去。
+[下载当前 APK 与单文件说明](https://github.com/LQB9/qq-load-monitor/releases/tag/load-monitor-v1.17) · [完整说明与验证记录](docs-html/QQ负载监控-v1.17-最终版说明.html) · [版本记录](CHANGELOG.md)
 
-包名 `com.lqb9.qqwatchmod`，label「QQ 看门狗」（历史名字，功能已经从"杀进程看门狗"变成"负载监控 + 日志导出"）。
-**当前 v1.15（versionCode 16）**。
+## 当前规则
 
-## 它干什么
+| 项目 | 行为 |
+|---|---|
+| 监控对象 | 仅 QQ 同 UID 的进程与线程 |
+| 核心范围 | CPU 0—7 可任意组合，默认全选，至少选一个 |
+| 负载口径 | QQ 在所选核心上实际运行的 CPU 时间合计；一个核心满载为100% |
+| 触发条件 | 严格超过设置阈值，默认200%；首轮有效采样立即尝试处理 |
+| 前后台 | 确认 QQ 是否在前台；前后台共用同一阈值，后台超限立即尝试处理 |
+| 处理状态 | 最近100条表格：时间、线程、合计负载、实际结果；展开查看详情，当前 QQ 会话内保留，不导出 |
+| 无效数据 | 缺失、过期、丢事件、前后台未知时暂停处理 |
 
-- 汇总 **QQ 同 UID 全部进程**的 CPU（口径：单核满载 = 100%，200% 表示约 2 个核心），默认**阈值 200%**、间隔 1 秒，超限**只提示**（Toast + 进 LSPosed 日志）。
-- 每轮采样记录**全部 QQ 进程**、**最忙的 12 个线程**（名称/PID/TID/CPU/最后核心）、**核心频率**（优先 `cpuinfo_cur_freq`，否则 `scaling_cur_freq`）。
-- 面板三页：**概览 / 明细 / 设置**，原生 Canvas 画图（QQ 总 CPU 趋势、阈值虚线、核心 MHz 条形、TOP 线程横条）。
-- **日志**：UTF-8 滚动日志，4 份 × 512 KiB 上限，写到设备
-  `/sdcard/Android/data/com.tencent.mobileqq/files/watchdog-logs/`（`watchdog.0..3.log`，重启 QQ 保留）。
-- **导出**：面板上「导出日志到下载目录」→ `Download/QQWatchdog/QQWatchdog_日期_时间_随机码.txt`
-  （走 `MediaStore.Downloads`，不申请额外存储权限；Android 8/9 沿用 QQ 的存储授权，未授权会明确失败）。
-- 配置：`watchdog.on`（存在 = 开，总开关）；`watchdog.load`（原子写的 Properties 文本：`cpu=200` / `duration=0` / `interval=1` / `action=record`）。
-  ⚠️ **即便写成 `action=restart` 也只记录** —— 当前版本没有任何终止动作（源码静态检查无 `killProcess` / `tgkill` / `sendSignal` / `Thread.stop`）。
-- 不持唤醒锁；QQ 进程被系统冻结时监控也随之暂停（**锁屏期间不会有采样**，这是系统行为不是 bug）。
+MHz 表示核心频率，与占用百分比分开显示。线程数量与最后运行核心仅供参考，不参与所选核心的负载归因。
 
-## 和另一个模块怎么配合（改代码前必读）
+## 任务处理能做到什么
 
-两个模块跑在同一个 QQ 进程里，但 **LSPosed 给每个模块单独的 ClassLoader → 不能 `Class.forName` 对方的类**。
-所以约定用 **「+」这个 View 的 tag** 互放一个 `java.lang.Runnable`：
+按所选核心上的占用贡献排序，优先定位最忙的未保护工作任务。复核 PID/TID 启动时间和任务身份，任务须覆盖整个采样窗口。
 
-| key | 谁写 | 作用 |
-|---|---|---|
-| `0x7f0f0001` | QQ 增强 | 打开**增强面板** |
-| `0x7f0f0002` | 本模块（负载监控） | 打开**负载监控面板** |
+当前支持对标准 `FutureTask` 发起协作取消，只有实际观察到任务返回才显示「任务已结束」；线程池的工作线程可以保留。取消标记已设置，但任务仍在执行，会显示「仍在运行」。普通 `Runnable`、自定义取消回调和原生线程没有通用停止接口时，显示「无法处理」或「未处理」。同一未成功目标最多每10秒重试。
 
-- key 必须是资源 id 形态（`View.setTag(int,Object)` 要求 key ≥ `0x02000000`）
-- **值的类型只能是 boot classpath 的 `java.lang.Runnable`**（自定义接口跨 ClassLoader 会 `ClassCastException`）
-- **长按「+」归 QQ 增强**：本模块每次 `onResume` 检查 `0x7f0f0001` —— 在就让出长按（日志 `long-press left to QQ 增强 (tag found)`），
-  不在（没装增强）才自己 `setOnLongClickListener` 接管
-- 本模块面板底部的「打开 QQ 增强面板」读 `0x7f0f0001` 直接 `run()`；没有就 Toast 提示
+不强杀 QQ 进程，不使用 `SIGKILL`、`tgkill` 或 `Thread.stop`。主线程、Binder、渲染、GC 与模块线程受保护。高 CPU 占用是触发条件，不能单凭阈值证明线程泄露；真实 GIF/pool 故障任务和跨 QQ 子进程的业务停止尚待验证。
 
-## 安装
+## 安装与使用
 
-1. 装 APK → LSPosed / ReVanced Xposed 勾选，**作用域勾 QQ**
-2. 强行停止 QQ 再打开（**模块改动必须重启 QQ 才生效**）
-3. 长按 QQ 右上角「+」→（装了增强时）增强面板 →「实验 → 线程泄露看门狗」
+1. 安装 Release 中的 **QQ负载监控.apk**，在 LSPosed / ReVanced Xposed 启用，作用域勾选 QQ。
+2. 强行停止 QQ，再打开，使新模块生效。
+3. 从桌面打开「QQ负载监控」，点击「启动精确核心采集」，按手机提示授权 root。
+4. 长按 QQ 主界面右上角「+」打开面板。一起安装 QQ 增强时，先进入增强面板，再点击「实验 → 线程泄露看门狗」。
+5. 设置页选择核心、合计阈值、采样间隔，保存后开启监控；在概览确认精确采样有效。
 
-## 构建与自测
+手机重启后需手动再次启动精确采集。采集要求 root、tracefs 的 `sched_stat_runtime` 事件及已开启的内核调度统计；当前实现不会主动修改全局调度统计开关。QQ 主进程被系统冻结时，模块判定与任务控制会延迟，独立采集器仍可采集运行中的 QQ 进程。
+
+## 面板与日志
+
+- **概览**：所选核心的 QQ 合计、趋势/阈值线、QQ 逐核百分比、核心频率、热点线程。
+- **明细**：QQ 全核心进程 CPU 参考值、热点线程与监控日志导出。
+- **处理**：实际处理状态表，展示待确认、任务已结束、仍在运行、无法处理等结果。
+- **设置**：总开关、核心选择、阈值及采样间隔。v1.17 使用固定尺寸的粉色核心按钮，修复 QQ 主题将复选勾选图放大重叠的问题。
+
+监控日志为 UTF-8、4份×512KiB，位于 `/sdcard/Android/data/com.tencent.mobileqq/files/watchdog-logs/`，重启 QQ 后保留。明细页可导出至 `Download/QQWatchdog/`。处理状态表不加入导出；模块不读取聊天内容。
+
+配置目录：`/sdcard/Android/data/com.tencent.mobileqq/files/`。`watchdog.on` 存在表示开启，`watchdog.load` 示例：
+
+```properties
+cpu=200
+duration=0
+interval=1
+cores=255
+action=stop_task
+```
+
+`cores` 是 CPU0—7 的位掩码，255为全选、15为CPU0—3。精确采集文件为 `watchdog.core`。
+
+## 构建与验证
+
+现有构建脚本按本机路径配置：工程 `D:\deepseek\qq-watchdog`、JDK21、Android SDK build-tools37.0.0/platforms android-37.0。换机器时需调整各脚本的工具链路径。原签名私钥不入库；要覆盖当前已装模块，须恢复原 `mod\watchmod-key.jks`。
 
 ```powershell
-$env:JAVA_HOME='<JDK21>'
-$env:ANDROID_HOME='<Android SDK，含 build-tools 37.0.0>'
-powershell -ExecutionPolicy Bypass -File mod\build.ps1      # 输出 mod\build\qqwatchmod.apk，成功标志 BUILD OK
-powershell -ExecutionPolicy Bypass -File mod\test.ps1       # JVM 回归检查
-powershell -ExecutionPolicy Bypass -File mod\log-test.ps1   # 日志/导出隔离测试
-powershell -ExecutionPolicy Bypass -File mod\ui-test.ps1    # 图表面板离屏渲染检查
+powershell -ExecutionPolicy Bypass -File mod\build.ps1
+powershell -ExecutionPolicy Bypass -File mod\test.ps1
+powershell -ExecutionPolicy Bypass -File mod\ui-test.ps1 -OutputDirectory D:\qqwatch-ui-check
+powershell -ExecutionPolicy Bypass -File mod\log-test.ps1 -OutputDirectory D:\qqwatch-log-check
+powershell -ExecutionPolicy Bypass -File mod\core-test.ps1 -OutputDirectory D:\qqwatch-core-check
+powershell -ExecutionPolicy Bypass -File mod\bridge-test.ps1 -OutputDirectory D:\qqwatch-bridge-check
 ```
 
-⚠️ `.ps1` 必须**纯 ASCII**（PowerShell 5.1 把没有 BOM 的脚本按 GBK 读，中文注释会把脚本拆坏）。
-`mod\android-tests\` 里是**隔离的临时测试包**（不同包名，不进正式 APK）。
+生产构建成功标志 `BUILD OK`，输出 `mod\build\QQ负载监控.apk`；内部兼容产物 `qqwatchmod.apk` 同内容。`.ps1` 保持 ASCII。设备隔离测试脚本生成临时测试 APK，须另外安装并运行 instrumentation，源码不打入正式 APK。
 
-## 目录
+| 验证 | 结果与范围 |
+|---|---|
+| v1.17 构建/签名/安装 | 通过；vc18回读，QQ加载新版，精确采集恢复，用户配置保留 |
+| v1.17核心选择 UI | 3组原生离屏渲染：全选、混选、260dp窄屏/1.6倍字体；点击及辅助功能状态通过 |
+| v1.16基础逻辑 | 101项 JVM 检查通过；v1.17未改对应采集与处理逻辑 |
+| v1.16精确核心采集 | 真机固定核心控制样本验证，未选核心排除，合计超过200% |
+| v1.16任务协议 | 隔离案例验证任务返回与取消后仍运行两类状态 |
+| 待验证 | 故障机真实异常任务、跨QQ子进程业务停止、长时间功耗、QQ内完整四页点击流程 |
 
+离屏图片使用演示数据，不能当作故障机已经修复的证据。
+
+## 源码目录
+
+- `mod/`：生产模块、依赖库、资源、测试与手工构建脚本。
+- `tools/mk_module_icon.py`：粉色渐变/白色负载曲线图标生成器（Pillow），5种密度。
+- `docs-html/`：当前单文件说明及历史文档。当前口径以 README 和 v1.17说明为准。
+- `AGENTS.md`：开发交接与历史验证记录。
+- 根目录 `src/ assets/ res/ build.ps1`：已停用的早期独立版，保留历史。
+
+QQ 增强互通保留 `View` tag `0x7f0f0001` / `0x7f0f0002`，值使用跨 ClassLoader 可识别的 `java.lang.Runnable`。增强模块存在时长按优先归增强。
+
+签名私钥、访问令牌、真实设备日志和聊天数据不入库。仓库与云盘备份的可见性沿用已有设置。
+
+## APK 校验
+
+文件 **QQ负载监控.apk**，128,006 B，SHA-256：
+
+```text
+5EC34DECB5B291BBB0D55EBB7662A3E47806DFD5613AE54AAB52D9F593F28358
 ```
-mod\src\com\lqb9\qqwatchmod\   模块源码（WatchModule 入口 / WatchPanel 面板 / DashboardView+CpuCharts 图表 /
-                               QqCpuTracker+ThreadCpuTracker+CoreFrequency 采样 / RollingLog+WatchLog 日志 / DownloadExporter 导出）
-mod\build.ps1  AndroidManifest.xml  xposed\  libs\  res\  tests\
-src\ assets\ res\ build.ps1    早期「独立版 App（root 版）」，已弃用，留档
-docs-html\                     单文件说明 HTML（含每版说明与验证记录）
-AGENTS.md                      本工程的权威说明（现状 / 逐版改动 / 真机验证记录 / 坑，中文）
-```
-
-## 不在这里的东西
-
-- **签名私钥**（`mod\watchmod-key.jks`，别名 `qqwatchmod`）——不入库，只在本地和云盘备份里。**丢了就再也无法覆盖安装**。
-- GitHub token、真机日志、聊天数据。本模块**不读取聊天内容**。
-
-## ⚠️ 如果要转成公开仓库，先做这几件事
-
-1. **改掉写死的签名口令**：`mod\build.ps1` 里有 `-storepass/-key-pass`（自用演示口令），`AGENTS.md` 里也有同一串。
-   公开前改成读环境变量或本地未入库的口令文件（例如 `mod\keystore.pass`，并加进 `.gitignore`）。
-2. 删掉 `AGENTS.md` 里的本机路径与个人设备信息（`D:\deepseek\...`、设备序列号、云盘备份路径等），
-   或者干脆把 `AGENTS.md` 排除在公开仓库之外。
-3. README 顶部补一段**免责声明**：自用模块、只在自己的设备上用于自己账号的负载观测；
-   修改系统行为/第三方 App 有风险，且可能违反服务条款，使用者自负。
-4. 复查 `docs-html\` 与 `ref\` 里的截图：里面会露出**聊天列表、昵称、群名、头像**等个人内容（截图是真机拍的），
-   公开前要么裁掉、要么整个目录不入库。
-5. 检查 git 历史（`git log -p`）里有没有早期版本误提交过密钥/口令。
-
-## 版本线（简）
-
-- v1.12 及以前：**看门狗** —— 动态上限 = 基线 + K × 本进程 CPU%，连续 3 次超限就 `killProcess` 自己。⚠️ 这个行为**已经去掉**。
-- v1.13：改成**只记录并提示**，新采样口径（QQ 同 UID 全部进程汇总、单核=100%）。
-- v1.14：面板重写成**概览 / 明细 / 设置**三页 + 原生 Canvas 图表。
-- v1.15：**日志记录 + 导出到下载目录**（滚动日志、专用后台线程、MediaStore 导出）。

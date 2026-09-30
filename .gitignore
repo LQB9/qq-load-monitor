@@ -1,14 +1,17 @@
-# 签名私钥 / 令牌绝不入库
+# Local signing material and credentials
 *.jks
 *.keystore
+*.pass
 *token*
 secrets/
-# 构建产物
+# Generated files
 build/
 *.apk
 *.idsig
 outputs/
-# 临时
+__pycache__/
+*.pyc
+# Local diagnostics
 _buildlog/
 *.log
 *.out

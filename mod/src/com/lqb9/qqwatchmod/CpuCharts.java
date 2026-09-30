@@ -158,6 +158,27 @@ final class CpuCharts {
         }
     }
 
+    static final class CoreLoad extends Chart {
+        double[] loads = {-1,-1,-1,-1,-1,-1,-1,-1}; int mask = 255;
+        CoreLoad(Context c) { super(c); }
+        void update(double[] loads, int mask, boolean stale) {
+            this.loads = loads.clone(); this.mask = mask; this.stale = stale; invalidate();
+            setContentDescription("QQ 各核心负载，选择核心 " + CoreSnapshot.selection(mask));
+        }
+        @Override protected void onMeasure(int w, int h) { setMeasuredDimension(View.MeasureSpec.getSize(w), (int)d(194)); }
+        @Override protected void onDraw(Canvas c) {
+            float cell = (getWidth() - d(18)) / 2;
+            for (int i = 0; i < 8; i++) {
+                float x = i % 2 * (cell + d(18)), y = i / 2 * d(44) + d(14);
+                boolean selected = (mask & (1 << i)) != 0;
+                text(c, (selected ? "● " : "○ ") + "CPU " + i, x, y, selected ? INK : SUB, 10, Paint.Align.LEFT);
+                text(c, loads[i] < 0 ? "—" : percent(loads[i]), x + cell, y, dataColor(selected ? PINK : SUB), 10, Paint.Align.RIGHT);
+                bar(c, x, y+d(8), x+cell, y+d(14), LINE);
+                if (loads[i] >= 0) bar(c, x, y+d(8), x+cell*(float)Math.min(1, loads[i]/100), y+d(14), dataColor(selected ? PINK : 0xFFCBD0DC));
+            }
+            text(c, "每核 0—100% · ● 计入合计", 0, getHeight()-d(3), SUB, 9, Paint.Align.LEFT);
+        }
+    }
     static final class Rank {
         final String name, note;
         final double cpu;

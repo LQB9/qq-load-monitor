@@ -117,10 +117,11 @@ public final class CpuMonitoringTest {
         check("record".equals(immediate.action), "stale restart config cannot enable process killing");
         CpuLoadMonitor monitor = new CpuLoadMonitor();
         check(!monitor.sample(-1, 0, immediate, 0).trigger, "initial frame cannot trigger");
-        check(monitor.sample(200, 1000, immediate, 0).trigger, "threshold reached prompts on first valid frame");
-        check(!monitor.sample(300, 2000, immediate, 0).trigger, "continuous load prompts once");
-        check(!monitor.sample(199, 3000, immediate, 0).trigger, "load below threshold resets episode");
-        check(monitor.sample(250, 4000, immediate, 0).trigger, "new high episode prompts again");
+        check(!monitor.sample(200, 1000, immediate, 0).trigger, "equal threshold does not trigger");
+        check(monitor.sample(201, 2000, immediate, 0).trigger, "strictly above threshold prompts immediately");
+        check(!monitor.sample(300, 3000, immediate, 0).trigger, "continuous load prompts once");
+        check(!monitor.sample(199, 4000, immediate, 0).trigger, "load below threshold resets episode");
+        check(monitor.sample(250, 5000, immediate, 0).trigger, "new high episode prompts again");
 
         CpuLoadMonitor.Settings sustained = new CpuLoadMonitor.Settings(true, 200, 3, 1, "record");
         monitor.reset();

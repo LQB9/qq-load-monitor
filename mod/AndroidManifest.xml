@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.lqb9.qqwatchmod"
-    android:versionCode="16"
-    android:versionName="1.15">
+    android:versionCode="18"
+    android:versionName="1.17">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="32" />
 
@@ -13,7 +13,7 @@
     </queries>
 
     <application
-        android:label="QQ 看门狗"
+        android:label="QQ负载监控"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme">
 

@@ -1,9 +1,36 @@
-# AGENTS.md — qq-watchdog（QQ 看门狗 · 自用）
+# AGENTS.md — qq-watchdog（QQ负载监控 · 自用）
 
 > 给接手的人/AI：**本文件是唯一入口，读完就能继续**。
 > 沟通用**中文、短句、先结论**；用户**打不开 .md**，给他看的文档出单文件 HTML 放工作区（**别放桌面**）。
 
-## 0. 当前代码：v1.15 日志记录与导出（2026-09-30）
+## 0. 当前代码：v1.17 核心选择与图标修复（2026-10-01）
+
+- 用户截图：QQ 的主题将系统 CheckBox 选中图案放大，核心选择绿勾重叠；要求模块图标参考 QQ 增强、APK 改名为「QQ负载监控」。本次仅改 UI、图标、名称，v1.16 的采集与任务处理逻辑沿用，详情在下节。
+- `CoreSelectorView.java`：两列四行固定几何的原生 Canvas 核心按钮，48dp 最小点击区域、18dp 勾选标记，粉色选中态；不使用 QQ 的主题 CheckBox 图片。点选可逆、读初始 mask、保存仍拒绝空选择；辅助功能提供 checked/checkable 状态。`WatchPanel.java` 接入并移除过时的「0 秒…即记录并提示」文字。
+- 名称统一「QQ负载监控」：Manifest/桌面/模块管理器、说明页标题、面板标题、提示和新日志标题。包名、签名、增强 tag 互通协议保持。`tools/mk_module_icon.py` 生成 5 个密度的粉色渐变/白色负载曲线图标，参考实际 QQ 增强图标；旧 `tools/mkicon.py` 仅针对已停用的独立版。图标生成依赖 Pillow，使用 Codex bundled Python 即可。
+- 当前 v1.17 / vc18：2026-10-01 01:16:00 root pm install Success，回读正确；QQ PID 30002，精确采集器 `CORE_READY pid=30011`，真实日志有新版 SESSION。更新前后阅读器保持前台。`watchdog.load` 原字节内容保留：cpu=200、cores=255、duration=0、interval=1、action=stop_task。
+- 验证：生产 BUILD OK、原签名验证通过；原生隔离渲染 3 组（全选/截图混选/260dp 窄屏与1.6倍字体），勾选状态切换、辅助功能检查通过，目视无重叠或截字。临时渲染包已卸载，本轮未重复 CPU 高负载或业务取消测试；QQ 内完整面板未再次点击截图。
+- APK 128,006 B，SHA256 `5EC34DECB5B291BBB0D55EBB7662A3E47806DFD5613AE54AAB52D9F593F28358`。交付 `D:/ChatGPT/2026-09-30/xu/outputs/QQ负载监控.apk`；生产构建额外生成 `mod/build/QQ负载监控.apk`，`qqwatchmod.apk` 保留供既有工具使用。build.ps1/ui-test.ps1 保持 ASCII。
+- 本轮证据：工作区 `work/v1.17-ui-check/`（3张PNG与渲染结果），`work/v1.17-final-evidence/`（安装记录、实际日志、精确核心快照）。修改前备份 `work/qq-watchdog-before-v1.17/`。故障机真实线程处理仍待验证。
+
+## 0.0a. v1.16 核心负载与任务处理测试版（历史，2026-10-01）
+
+用户最新授权：故障机不在手边、不能复现，先按已约定口径开发再验证。已替代下方 v1.15“先不做检测与线程处理”的旧要求；无需再追问复现条件。沟通中文短句，交付 HTML/APK。
+
+- 约定：CPU 0—7 任意组合；仅 QQ 在所选核心上的合计 CPU 时间，单核 100%；阈值默认 200% 可设，严格大于才触发；前后台同阈值，首轮有效样本尝试处理；目标工作线程/任务，保留 QQ 进程；处理状态表，不导出。没有故障机真实停止验证，不能宣称任意线程可强杀或泄露已解决。
+- 当前生产源码/APK v1.16 / vc17，2026-10-01 00:36:53 root pm install Success；最后 QQ PID 29168，采集器 CORE_READY pid=29275，回读正确、签名校验通过。最后安装时 QQ 已在前台，重载回到桌面后已恢复 QQ；没有继续打开模块面板/点聊天。后台识别与精确采样已进入生产日志，Java 任务 hook 已实际捕获任务。
+- `CoreCollector.java`：独立 root app_process，QQ UID 过滤，sched_stat_runtime 的实际 CPU runtime 累计；`set_event_pid` + event-fork，独立 tracefs 实例，mono 时钟，256KiB/核。每秒发现进程/线程、差分完整性检查、丢事件统计、原子发布 `watchdog.core`；会话 generation 跨丢事件/进程变化断开差分。每 2 秒 dumpsys activity 确认 QQ 前后台（兼容 ResumedActivity）。不修改全局 sched_schedstats、全局 trace 或 hsuart。停止可能留下已禁用实例，下一次启动清理自己 UID/目录哈希前缀；本轮测试实例已手动 rmdir 清理。
+- `CoreSnapshot.java` / `CoreTracker.java` / `RuntimeLine.java`：版本化有界数据、UTF8 名称、PID/TID 启动时间身份；累加所选核心实际时间，未选核心不触发。拒绝 UID 错误、无效/过期/间断/计数回退/不完整，重复序列不重复判定；换核心清空 `LoadHistory`，避免混合口径。只展示全核心进程 CPU 为参考，精确数据缺失时不以 lastCore 猜测。
+- `WatchModule.java`：QQ 各进程 hook Application.attach、FutureTask.run/runAndReset、ThreadPoolExecutor.beforeExecute/afterExecute，仅主进程采样。设置迁移为 `cores=255` 默认全选、duration 固定 0、action=stop_task；已有阈值/间隔保留。新全开时严格 >200%，同阈值前后台；实际动作前复核设置。现有 QQ 增强 tag/长按协议保留。
+- `TaskRegistry.java` / `TaskBridge.java`：注册活动任务及 generation/startNs；只处理覆盖整个采样窗口的目标，复核 proc 身份。Android13+ NOT_EXPORTED 同 UID 控制及结果广播，16 条有界控制队列、8 秒结果超时、5 秒确认。只允许标准 FutureTask 的 cancel/done 实现；普通 Runnable、自定义取消回调、原生线程需专用停止接口，当前不盲目 interrupt。取消位不算成功，观察任务返回才“任务已结束”；忽略中断显示“仍在运行”；线程池线程可保留。主线程/Binder/Render/GC/模块线程受保护。无 SIGKILL/tgkill/killProcess/Thread.stop；协作取消仍可能影响正常业务，不能保证所有 QQ 功能无影响。
+- 最忙未保护工作线程优先；同一未成功身份每10秒重试，确认结束或换任务后解除。阈值不能证明泄露，前后台未知暂停；QQ主进程被系统冻结时处理延迟。独立 UID 隔离进程未采样。跨QQ子进程实际业务停止尚未实测。
+- `WatchPanel.java` / `DashboardView.java` / `CpuCharts.java`：概览/明细/处理/设置四页，新增真实逐核百分比图、所选核心合计、前后台/采样状态。CPU0—7复选，默认200%可设。`StatusTableView.java` / `ProcessingHistory.java` 表格最近100条，时间/线程/合计/状态，展开PID/TID/核心/原因/详情，当前QQ会话内存保留，不加入导出。保留原监控日志及 Download/QQWatchdog 导出。
+- `RootControl.java` / `MainActivity.java`：说明页启动/停止 root 精确采集；su 内 nohup app_process +独立输出文件，最多10秒等待 READY/FAILED，避免 Activity/launcher 长期引用，Root守护独立于页面；手机重启后手动再次启动。内核须 tracefs/sched_stat_runtime/sched_schedstats=1，缺少时明确不可用，当前不会开启全局统计。
+- 验证：`test.ps1` 101 项（53 CPU+12日志+36核心与任务）；`core-test.ps1` 真机7个有效固定CPU0/1/2样本，最终合计最高228.8%，仅选0/1后CPU2最小排除37.8%；前轮286.1%/85.4%。`bridge-test.ps1` 2个隔离UID生产协议案例，任务返回且工作线程保留、取消位已设但执行仍继续如实报告。`ui-test.ps1` 7种状态×概览/表格14张PNG（演示数据）；后台无测试窗口。测试不打入生产APK，临时包已卸载。
+- APK 95,238 B，SHA256 D07AB1AEA6FEF9016C31FFA1AB6C2A9081D0EC4A26E004488D470DC2C472C2D8，当前工作区 `outputs/QQ看门狗-v1.16-核心负载与任务处理测试版.apk` / `outputs/QQ负载监控-v1.16-测试版说明与验证.html`（docs-html镜像）。安装/真实日志/采集快照/演示图在 `work/v1.16-final-evidence/`；测试证据 `work/v1.16-core-device/`。
+- 未验证：故障机 GIF/pool 异常的真实取消、跨QQ子进程真实回传、QQ内四页点击保存互跳、长时间功耗；原生停止接口仍需业务适配。本版是可运行的测试版，不能写成“已实现任意线程终结”。修改前备份 `work/qq-watchdog-before-v1.16/`。非 Git 项目，无 commit/PR。
+
+## 0.0. v1.15 日志记录与导出（历史，2026-09-30）
 
 用户最新要求：**核心0–3检测、后台判定及终止线程先别做；只补日志记录，并能导出到手机下载目录。** 上述检测调整之前仅只读分析，未改代码。本版保留v1.14负载判定，不终止线程/进程。
 
