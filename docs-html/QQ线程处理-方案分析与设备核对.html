@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>QQ 负载监控 · 线程处理方案分析</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f5f6fa;color:#202432;font:15px/1.8 "Microsoft YaHei",sans-serif}main{max-width:1060px;margin:auto;padding:32px 22px}h1{font-size:28px;margin:8px 0 16px}h2{font-size:19px;margin:0 0 12px}.tag{background:#ffeaf2;color:#db3e76;padding:5px 12px;border-radius:16px;font-size:12px}.card{background:white;border-radius:18px;padding:24px;margin:18px 0}.lead{font-size:18px}.muted{color:#778094}p{margin:8px 0}table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:left;vertical-align:top;border-bottom:1px solid #e9edf4}th{background:#f6f7fb}a{color:#d63871}code{background:#f1f3f8;padding:2px 5px;border-radius:4px;font-size:13px}.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.step{padding:18px 14px;border-radius:14px;background:#fff0f6}.step b{display:block;color:#d63871}.facts{display:flex;flex-wrap:wrap;gap:10px}.facts span{padding:6px 10px;background:#edf4ff;border-radius:9px;font-size:13px}.note{padding:12px 16px;background:#fff7eb;border-radius:12px}li{margin:8px 0}.scroll{overflow:auto}footer{color:#778094;font-size:12px;margin-top:18px}@media(max-width:700px){.flow{grid-template-columns:1fr 1fr}main{padding:20px 12px}.card{padding:18px}table{min-width:580px}}
+</style></head><body><main><span class="tag">2026-09-30 · 仅分析，未修改装机行为</span>
+<h1>推荐方案：逐核归因，再取消已确认的 QQ 任务</h1>
+<div class="card"><p class="lead"><b>让造成负载的任务停止执行，是当前模块最适合的方向。</b>专用工作线程可以在任务结束后自然退出；线程池工作线程则保留，用于后续正常任务。处理成功必须由任务实际退出和 CPU 变化确认。</p><p>当前 v1.14 已安装，只有 QQ 总 CPU、线程 CPU、最后运行核心和核心频率。尚未采集逐核占用率，也没有登记线程当前对应的 QQ 任务，不能直接把排行当成终止名单。</p></div>
+
+<div class="card"><h2>这台手机具备的基础</h2><div class="facts"><span>Android 16 · SDK 36</span><span>8 核</span><span>KernelSU root 已验证</span><span>Perfetto / simpleperf 可用</span><span>sched_switch 事件存在</span><span>root 可读 /proc/stat</span></div>
+<p>已通过 ADB 只读检查内核调度事件格式、权限、CPU 计数和系统 libc。读取时全局 tracing_on 为 0，本轮没有启用跟踪、采集线程栈、安装程序、重启 QQ 或取消任务。</p>
+<p>系统 libc 动态符号实查：<code>pthread_cancel</code>不存在；<code>pthread_exit</code>与<code>pthread_kill</code>存在。仍需单独验证真实调度录制的覆盖率和开销，事件存在不等于采集链路已验证。</p>
+<p class="muted">ADB 下能运行 root 命令，不能据此认为 QQ 内的模块已经具有 root。若做长期逐核归因，需要独立采集服务承担必要权限，QQ 内模块负责辨认及取消任务。</p></div>
+
+<div class="card"><h2>不同处理方式的选择</h2><div class="scroll"><table><thead><tr><th>方式</th><th>能做到什么</th><th>建议</th></tr></thead><tbody>
+<tr><td>QQ 自有取消接口 / 停止标志</td><td>让当前任务在正常退出点停止，保留资源清理流程。</td><td><b>首选；逐类适配已验证的后台任务。</b></td></tr>
+<tr><td>Future.cancel(true) / Thread.interrupt()</td><td>请求取消或中断；任务必须配合，忽略中断的计算循环可能继续执行。</td><td>仅对已确认支持此方式的任务使用。<a href="https://developer.android.com/reference/java/util/concurrent/Future#cancel(boolean)">Android Future 文档</a></td></tr>
+<tr><td>Thread.stop()</td><td>Android 文档声明抛 UnsupportedOperationException；强制退出原本也可能破坏共享状态。</td><td>不作为实现途径。<a href="https://developer.android.com/reference/java/lang/Thread#stop()">Android Thread 文档</a></td></tr>
+<tr><td>向 TID 发送 SIGKILL / SIGTERM</td><td>具有终止进程语义的信号，即使发给一个线程，也会影响整个所属进程。</td><td>不符合保留 QQ 进程的目标。<a href="https://man7.org/linux/man-pages/man3/pthread_kill.3.html">Linux pthread_kill</a></td></tr>
+<tr><td>原生 pthread_cancel()</td><td>Android Bionic 不提供该接口；实查本机 libc 也没有该动态符号。</td><td>不能套用桌面 Linux 的线程取消方案。<a href="https://android.googlesource.com/platform/bionic/%2B/8eebd02d01a582e0d175e253c114a197010065f9/docs/status.md">Android Bionic 状态说明</a></td></tr>
+<tr><td>注入 pthread_exit / 原始 SYS_exit</td><td>pthread_exit 退出调用者；原始 Linux exit 系统调用可以只退出调用线程。但二者不能自动保证 QQ 的共享锁和运行时状态正常。</td><td>我的工程判断：不用于常驻自动处理。<a href="https://man7.org/linux/man-pages/man3/pthread_exit.3.html">pthread_exit</a>、<a href="https://man7.org/linux/man-pages/man2/_exit.2.html">原始系统调用与库函数的区别</a></td></tr>
+</tbody></table></div><p class="note">结论不是“系统绝对无法让一个线程退出”，而是“没有通用办法强杀 QQ 任意线程，并保证 QQ 的其他功能和运行时正常”。</p></div>
+
+<div class="card"><h2>按你的逐核需求，完整流程应当这样做</h2><div class="flow">
+<div class="step"><b>1 · 发现核心超限</b>从每个 cpuN 的计数差分获得 0—100% 执行占用。MHz 单独显示。</div>
+<div class="step"><b>2 · 确认谁占用它</b>短窗口调度跟踪，计算 QQ 每个 TID 在每个核心的运行时间。</div>
+<div class="step"><b>3 · 找到当前任务</b>把 Linux TID 与实际执行的任务对象、线程栈、任务代次关联。</div>
+<div class="step"><b>4 · 取消与复查</b>已验证任务调用取消入口；确认任务返回，并检查跨核心 CPU 变化。</div>
+</div><p>Perfetto 的调度数据包含线程、CPU 核心和运行时段，可以处理线程迁移；当前的“最后运行核心”只是位置线索。<a href="https://perfetto.dev/docs/data-sources/cpu-scheduling">Perfetto CPU 调度文档</a></p>
+<p>日常先用轻量逐核采样。核心超限后，可触发 1—3 秒短跟踪，在这个新窗口再次确认仍有高负载；不能把随后录到的线程倒推成上一个窗口的原因。若需要回看触发前的原因，则需环形跟踪缓冲，并实测额外开销。</p>
+<p>逐核占用包含其他应用及内核活动。必须验证 QQ 的真实贡献；中断占用高或主要由其他应用造成时，不处理 QQ。按线程 CPU 计数交叉检查，并识别事件丢失、频率切换、核心上下线和计数重置。</p>
+<p>原生 CPU 忙循环需要对应库的停止入口或退出标志；单凭 Java 中断不能保证停止。没有可靠取消入口的任务应标成“暂不支持”，不能显示“已终止”。</p></div>
+
+<div class="card"><h2>模块内部建议拆成四部分</h2><div class="scroll"><table><thead><tr><th>部分</th><th>职责</th></tr></thead><tbody>
+<tr><td>CoreLoadTracker</td><td>逐核占用与有效性判断。首次样本、上下线、计数回退、长间断不参与处理。</td></tr>
+<tr><td>SchedAttribution</td><td>独立权限采集服务记录线程在各核心的运行时间；使用 Perfetto 会话或独立 trace 实例，避免改全局跟踪配置。</td></tr>
+<tr><td>TaskRegistry</td><td>在 QQ 各进程内，对选定任务入口登记 Process.myTid()、Thread 对象、Runnable/Callable/Future、任务开始时间与代次。Java Thread.getId() 不能直接当 Linux TID。</td></tr>
+<tr><td>TaskController</td><td>仅调用白名单任务的已验证取消方法；执行前复查进程/线程身份、任务代次及 QQ 版本。主线程、Binder、GC、关键通信等保持保护。</td></tr>
+</tbody></table></div>
+<p>现有采样后端还应保存完整线程数据，UI 继续只展示 TOP 12。新线程首帧以及下轮已退出的短命线程当前可能无法出现在 CPU 排行中，需要调度数据补齐。</p>
+<p>共享线程池里，同一个 TID 会轮流执行不同任务。必须匹配“进程启动身份＋线程启动身份＋当前任务代次”，避免发现旧任务超限后，却中断了该线程刚接到的新任务。</p>
+<p>不要先广泛 hook 所有 Thread.run() 或所有执行器。应从一次真实异常的热点栈出发，适配具体任务入口，再按实测需要扩大覆盖。</p></div>
+
+<div class="card"><h2>推荐的开发顺序与试验条件</h2><ol>
+<li><b>诊断版：</b>补逐核占用、同核 QQ 线程贡献、异常窗口和热点栈；保持只记录。找出实际异常任务。</li>
+<li><b>手动取消版：</b>针对一个已确认的后台任务接入取消方法，在面板显示“可取消任务”，检查 QQ 仍能收发消息、访问联系人、处理通知。</li>
+<li><b>自动处理版：</b>只对白名单任务开放自动取消，设置冷却时间及次数限制。QQ 版本变化后先回到诊断模式。</li>
+</ol><p>试验起点可设为：采样 1 秒，某核心执行占用 ≥90%，同一 QQ 任务在该核心的贡献 ≥70%，连续约 3 秒。这里只是建议，未写入手机；需要用启动、聊天、通话等正常场景校准。</p>
+<p>举例：1 秒窗口内核心 2 的执行占用为 95%，QQ 任务 A 在核心 2 运行了约 0.8 秒，即贡献约 80%；如果任务 A 已确认可取消且仍在执行，才请求它停止。</p>
+<p>你之前提到的“立即终止”，仍会受采样窗口、归因确认和任务响应时间影响。一次核心接近 100% 也可能是正常短任务；逐核百分比在 0—100%，200—300% 属于多个核心的汇总占用。</p></div>
+
+<div class="card"><h2>怎样判断处理真的成功</h2><ul>
+<li>状态区分：发现超限 → 已请求取消 → 已确认任务退出 / 超时 / 不支持。Future 显示已取消，不足以证明代码已停止执行。</li>
+<li>专用线程退出时核验对应身份的 TID 消失；线程池任务结束则核验执行出口，允许工作线程继续存活。</li>
+<li>检查目标线程在所有核心的 CPU，而非仅原核心下降，避免把迁移当成成功。</li>
+<li>检查锁等待、QQ 功能、任务自动重建和监控开销；取消后自动重试产生新负载时，分析重试源头。</li>
+<li>若归因窗口缺数据、目标已换任务或任务未验证，保留记录；不自动升级为杀进程。</li>
+</ul><p class="lead"><b>最值得先做的是“逐核归因＋任务识别”的诊断版。</b>等真实异常线程的栈和任务类型明确，再决定具体用哪个取消入口。</p></div>
+<footer>依据：当前 v1.14 源码、ADB 只读检查、Android 与 Linux 官方接口文档。QQ 具体任务取消入口尚未采集或验证。本分析未修改模块、配置、跟踪开关或 QQ 进程。</footer>
+</main></body></html>

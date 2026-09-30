@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QQ 负载监控 v1.13 · 说明与验证</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f6fa;color:#20232b;font:16px/1.75 "Microsoft YaHei",sans-serif}main{max-width:940px;margin:auto;padding:40px 24px 60px}h1{font-size:30px;line-height:1.35;margin:10px 0}h2{font-size:21px;margin:0 0 14px}.subtitle{color:#606977}.tag{display:inline-block;background:#ffedf4;color:#ba265b;border-radius:8px;padding:3px 12px;font-size:14px}.card{background:white;border:1px solid #e5e7ed;border-radius:16px;padding:24px;margin-top:20px}.pending{border-left:5px solid #c78e25;background:#fffcf4}p{margin:10px 0}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid #eef0f4}th{width:26%;font-weight:600;color:#535d6d}code,pre{font-family:Consolas,"Microsoft YaHei",monospace;background:#f4f5f8;border-radius:6px}code{padding:2px 5px}pre{padding:14px;white-space:pre-wrap;word-break:break-all;line-height:1.6;font-size:14px}.hash{word-break:break-all;font-size:13px;color:#606977}a{color:#bd2d63}.download{display:inline-block;background:#df3672;color:white;padding:9px 17px;border-radius:8px;text-decoration:none}.fine{color:#657081;font-size:14px}ul{padding-left:22px}li{margin:7px 0}@media(max-width:600px){main{padding:24px 14px}.card{padding:18px}h1{font-size:25px}th,td{padding:9px 6px}th{width:31%}}
+</style>
+</head>
+<body>
+<main>
+<span class="tag">v1.13 · 2026-09-30 · 已装机 · 仅记录并提示</span>
+<h1>QQ 负载、热点线程与核心频率监控</h1>
+<p class="subtitle">按本轮最后确认的范围完成：先观察 QQ 实际 CPU 消耗、定位忙碌线程、查看核心频率。本版没有终结线程或进程的操作。</p>
+<section class="card pending">
+<h2>交付状态</h2>
+<p><strong>源码、本地构建和签名验证通过，45 项逻辑检查通过；随后已通过 ADB 安装成功。</strong></p>
+<p>2026-09-30 20:04，设备 642ac39a 的安装返回 Success，回读版本 v1.13（versionCode 14）。已强停并重新打开 QQ，模块加载成功。</p>
+<p>真机日志记录到 215.3% 的 QQ CPU 负载和 3 个热点线程；面板显示了 8 个核心的驱动频率。主进程 PID 22644 在此事件后保持运行。</p>
+<a class="download" href="QQ看门狗-v1.13-负载监控.apk">获取监控版 APK</a>
+<p class="fine">包名 com.lqb9.qqwatchmod · versionCode 14 · versionName 1.13 · 58,374 字节。签名沿用原模块。</p>
+<p class="hash">SHA-256：B76470C40F8A45EBF25ECDD9A1E7A641983E8B91A68BAAE968388098CFD8FE77</p>
+</section>
+<section class="card">
+<h2>现在能看到什么</h2>
+<table>
+<tr><th>QQ 总 CPU</th><td>汇总 QQ 所属 UID 所有进程的 CPU 时间增量，包括主进程和同 UID 的工作进程。独立 UID 的隔离进程不在此范围。</td></tr>
+<tr><th>进程明细</th><td>进程名称、PID、采样窗口内的 CPU 占用。</td></tr>
+<tr><th>热点线程</th><td>显示最忙的 12 个线程：线程名、PID、TID、CPU 占用、最后运行核心。线程数量只供查看，不用于判断高负载。</td></tr>
+<tr><th>核心频率</th><td>逐核心显示 MHz。优先硬件读数；回退到驱动请求值时明确标记“驱动”。读不到则显示“频率不可读”。</td></tr>
+<tr><th>高负载事件</th><td>QQ 总 CPU 达到阈值时记录总占用和最忙的 3 个线程，并以 Toast 提示。同一次连续超限只提示一次，恢复后允许再次提示。</td></tr>
+</table>
+</section>
+<section class="card">
+<h2>百分比口径</h2>
+<p><strong>单核满载 = 100%。</strong>不按整部手机的核心数除成 0–100%。</p>
+<pre>QQ CPU% = QQ 所有进程 CPU 时间增量之和 ÷ 采样时长 × 100
+线程 CPU% = 该线程 CPU 时间增量 ÷ 采样时长 × 100</pre>
+<p>口径示例（不是设备实测）：QQ 显示 200%–300%，表示约占用 2–3 个核心；4 个核心全满约为 400%。<a href="https://man7.org/linux/man-pages/man1/top.1.html">Linux top 的 CPU 百分比说明</a>。</p>
+<p>1100 MHz 是频率，百分比是 CPU 时间占用，两者分别显示。驱动请求频率未必等于瞬时硬件实际频率，参见 <a href="https://www.kernel.org/doc/html/latest/admin-guide/pm/cpufreq.html">Linux CPUFreq 文档</a>。</p>
+<p class="fine">“最后核心”只是线程最近运行的位置。线程可能在采样期间迁移；本版不将整段线程占用归到该核心，也不声称已测得每个核心中 QQ 的完整驻留比例。</p>
+</section>
+<section class="card">
+<h2>设置和使用</h2>
+<table>
+<tr><th>默认阈值</th><td>200%，可调整。达到阈值视为超限。</td></tr>
+<tr><th>默认持续时长</th><td>0 秒：首轮有效超限采样即记录提示。也可设为持续若干秒后才提示。</td></tr>
+<tr><th>默认间隔</th><td>1 秒。升级时若仍存在旧 watchdog.iv，则沿用其间隔，面板会显示实际设置。</td></tr>
+<tr><th>处理方式</th><td>仅记录并提示。旧 action=restart 配置也不会启用进程终结。</td></tr>
+</table>
+<p>安装模块后强停并重开 QQ，LSPosed 作用域仍为 QQ。长按右上角“+”；若先打开 QQ 增强面板，从“实验”组的看门狗入口进入。两个面板的跳转机制保留。</p>
+<p>设置放在面板上方；标题和关闭按钮固定，明细可以滚动。点击开关或保存设置会唤醒采样，新设置应用后重新累计超限时间。</p>
+<p class="fine">本轮已安装并重启 QQ。近期事件最多 20 条，保存于本次 QQ 运行的内存中，QQ 重启后清空；超限事件同时进入 LSPosed 日志。</p>
+<pre>配置位置：/sdcard/Android/data/com.tencent.mobileqq/files/
+watchdog.on：存在即启用
+watchdog.load：整组配置，内容如下
+
+cpu=200
+duration=0
+interval=1
+action=record</pre>
+<p>旧 watchdog.base、watchdog.k、watchdog.scope 已停止参与判定，原文件不自动删除。原 killleak.* 白名单清理功能保留。</p>
+</section>
+<section class="card">
+<h2>验证和实际限制</h2>
+<ul>
+<li>45 项 JVM 回归检查通过：多进程合计可为 300%，线程差分和排序正确，PID/TID 复用不会算成尖峰，采样缺失不沿用旧 CPU，持续超限只提示一次，硬件/驱动频率回退和不可读状态正确。</li>
+<li>APK 构建、签名校验通过，包名和版本回读正确；DEX 中没有 killProcess 方法名。</li>
+<li>采用单调时间计时。进程集合变化、无效数据或长时间采样中断时重新建立判定；过期样本会在面板标记。</li>
+<li>监控运行在 QQ 主进程内。系统冻结 QQ 时监控也暂停，不额外持有唤醒锁。监控关闭且面板关闭时降低采样频率。</li>
+<li>已完成基本真机验证：模块加载、单个监控线程、CPU 超限记录、热点线程记录、8 核驱动频率、面板固定标题和事件区。截图时核心 0–5 为 787 MHz，6–7 为 1017 MHz，数值随时变化。</li>
+<li>尚未完整验证：各进程明细覆盖、硬件频率可读性、采样自身开销、后台 Toast 和额外互跳操作。手机正在使用，已停止界面操作。</li>
+</ul>
+<p>源码工程：<code>D:\deepseek\qq-watchdog\mod\</code>。构建脚本保持 ASCII，测试可直接复跑：</p>
+<pre>powershell -ExecutionPolicy Bypass -File D:\deepseek\qq-watchdog\mod\test.ps1
+powershell -ExecutionPolicy Bypass -File D:\deepseek\qq-watchdog\mod\build.ps1</pre>
+</section>
+</main>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QQ 看门狗 v1.15 · 日志记录与导出</title><style>
+body{max-width:850px;margin:0 auto;padding:30px 20px;background:#f5f6fa;color:#222;font:16px/1.8 system-ui,"Microsoft YaHei",sans-serif}
+h1{font-size:26px;color:#d62c68}h2{font-size:19px}section{background:white;padding:18px 24px;margin:18px 0;border-radius:14px}
+code{background:#f1f3f8;padding:3px 6px;border-radius:4px;overflow-wrap:anywhere}small{color:#667085}table{border-collapse:collapse;width:100%}td{border-bottom:1px solid #eee;padding:8px 0;vertical-align:top}td:first-child{width:130px;color:#667085}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f6fa;padding:14px;border-radius:10px;font:12px/1.7 monospace}
+</style><h1>QQ 看门狗 v1.15 · 日志记录与导出</h1><p>已在连接的手机上覆盖安装。日志自动记录并跨 QQ 重启保留。此次仅增加日志，原有 CPU 判定保持；核心 0–3 调整、前后台判定和终止线程功能暂停。</p>
+<section><h2>怎么导出</h2><ol><li>打开 QQ 监控面板。长按 QQ 主界面右上角「+」；有 QQ 增强时，从「实验」组进入看门狗。</li>
+<li>进入「明细」，顶部「监控日志」卡片点击「导出日志到下载目录」。</li>
+<li>等待显示「已保存」，在文件管理器打开「下载 → QQWatchdog」。</li></ol>
+<p>目录：<code>/storage/emulated/0/Download/QQWatchdog/</code><br>文件名：<code>QQWatchdog_日期_时间_随机码.txt</code>，UTF-8 中文文本。每次导出创建新文件，不覆盖已有导出。</p>
+<p>Android 10 及以上通过系统下载存储接口保存，无需额外存储授权。Android 8/9 沿用 QQ 的存储权限，未授权时面板显示失败原因。</p></section>
+<section><h2>记录了什么</h2><p>启动时间、模块版本、设备信息、设置变更、超限事件及错误；约每 5 秒保存一次负载快照，包含 QQ 总 CPU、各进程 CPU、热点线程 TOP 12、PID/TID、线程最后核心以及核心频率。采样间隔大于 5 秒时按实际采样记录。线程名来自系统 proc，可能截短。</p>
+<p>日志文件最多 <strong>4 份 × 512 KiB（合计 2 MiB）</strong>，旧记录自动轮换；普通 QQ 重启不清除日志。写日志和导出都在专用后台线程完成，不持唤醒锁；QQ 被系统冻结时暂停记录。仅保存监控信息，不读取聊天内容。</p>
+<p>导出文件包含当前设置、样本年龄、当前快照和保留的历史。单核满载=100%，频率不是占用率；最后核心不能用于推断整个窗口的驻留情况。</p></section>
+<section><h2>验证结果</h2><table><tr><td>当前安装</td><td>v1.15（versionCode 16） · 2026-09-30 21:58:19</td></tr>
+<tr><td>负载回归</td><td>52 项通过，原判定保留。</td></tr><tr><td>持久日志</td><td>12 项通过：重开保留、UTF-8、轮换大小与顺序、并发读写、长记录截断、失败反馈。</td></tr>
+<tr><td>Android 导出</td><td>Android 16 手机后台 11 项通过：无存储授权、中文文件读取、下载路径及发布状态、重复文件不覆盖、失败删除半成品、异步队列完整导出。临时测试包和测试导出文件已清理。</td></tr>
+<tr><td>正式 QQ 运行</td><td>PID 21466；仅一份 qqwatch-dog、一份 qqwatch-log。实际日志已持续写入，启动超限事件记录到 222.7%，线程和 8 核频率字段完整。</td></tr>
+<tr><td>验证边界</td><td>已验证生产导出代码的系统接口及正式模块写日志。未点击 QQ 面板的新导出按钮；Android 8/9 权限分支未真机验证。未进行长期性能测量。</td></tr></table></section>
+<section><h2>安装包与维护</h2><p>签名验证通过，包名和签名沿用。APK 74,758 字节。</p><p>SHA-256：<code>D2B74504FD5BEF45F52AACFDA27B1D8FFC78A0B3CCF116F0E264A975F84E55BD</code></p>
+<p>内部滚动日志：<code>/sdcard/Android/data/com.tencent.mobileqq/files/watchdog-logs/</code>。该目录仅供模块保存，日常查看使用下载目录的导出文件。</p></section></html>

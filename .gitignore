@@ -1,0 +1,16 @@
+# 签名私钥 / 令牌绝不入库
+*.jks
+*.keystore
+*token*
+secrets/
+# 构建产物
+build/
+*.apk
+*.idsig
+outputs/
+# 临时
+_buildlog/
+*.log
+*.out
+*.err
+_*
