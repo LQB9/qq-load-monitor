@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QQ负载监控 v1.25 · 模块架构与验证</title>
+<style>
+:root{--ink:#252b3d;--muted:#72798b;--pink:#ff3788;--blue:#4d6fe8;--border:#e4e7f0}
+*{box-sizing:border-box}body{margin:0;background:#f4f5fa;color:var(--ink);font:15px/1.8 "Microsoft YaHei",system-ui,sans-serif}
+main{max-width:1120px;margin:auto;padding:26px 24px 70px}header{padding:32px;border-radius:22px;background:linear-gradient(115deg,#ff3788,#fa85b6);color:white}
+h1{font-size:30px;line-height:1.4;margin:4px 0 12px}h2{font-size:21px;margin:0 0 12px}h3{font-size:16px;margin:16px 0 8px}p{margin:10px 0}
+.card{background:white;border:1px solid var(--border);border-radius:18px;padding:24px;margin-top:20px}.muted{color:var(--muted)}
+.badges{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.badge{background:#ffffff26;padding:4px 12px;border-radius:8px}
+.flow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:18px}.node{position:relative;border:1px solid var(--border);border-top:4px solid var(--pink);border-radius:12px;padding:14px;background:#fafbfe;min-height:144px}.node b{display:block;font-size:16px;margin-bottom:6px}.node small{display:block;color:var(--muted);font-size:13px;line-height:1.6}.node:not(:last-child):after{content:"→";position:absolute;right:-12px;top:50px;color:var(--pink);font-size:19px;background:white;z-index:1}
+.scroll{overflow:auto}table{width:100%;border-collapse:collapse;min-width:630px;margin:12px 0}th,td{border:1px solid var(--border);text-align:left;padding:12px;vertical-align:top}th{background:#fff0f6}tbody tr:nth-child(even){background:#fafbfe}
+code,pre{font-family:Consolas,monospace;overflow-wrap:anywhere}code{font-size:13px}pre{background:#f4f6fc;border-radius:12px;padding:16px;white-space:pre-wrap}
+.callout{border-left:4px solid var(--blue);padding:14px 18px;background:#f0f4ff;border-radius:0 10px 10px 0}.ok{color:#188766}.number{font-size:24px;font-weight:bold;color:var(--pink)}a{color:#d3256a}ol,ul{padding-left:24px}
+@media(max-width:780px){.flow{grid-template-columns:1fr}.node{min-height:0}.node:not(:last-child):after{content:"↓";right:20px;top:auto;bottom:-16px}main{padding:16px 12px 40px}header,.card{padding:20px}h1{font-size:25px}}
+@media print{body{background:white}main{padding:0}header{background:#fce9f1;color:#252b3d}.card{break-inside:avoid}.flow{grid-template-columns:repeat(5,1fr)}a{color:inherit}}
+</style></head><body><main>
+<header><div>2026-10-02 · 本地开发版 / versionCode 26</div><h1>QQ负载监控 v1.25<br>模块代码架构整理</h1>
+<p>按已约定的五部分拆分入口、采样、判定、任务规则和展示。原有核心负载口径、持续时长、任务处理与表格行为保留。</p>
+<div class="badges"><span class="badge">入口 1016 → 22 行</span><span class="badge">319 项 JVM 检查</span><span class="badge">26 个 Android 案例</span><span class="badge">当前 ADB 已安装</span></div></header>
+<section class="card"><h2>五部分各自负责什么</h2><p>采用与 QQ 增强一致的薄入口思路。负载监控有自己的运行容器、Hook 管理和处理规则；两模块通过原来的面板入口互通。</p>
+<div class="flow"><div class="node"><b>① 运行与配置</b><small>加载一次<br>统一注册 Hook<br>兼容读取与原子保存</small></div><div class="node"><b>② 负载采样</b><small>QQ CPU / 线程 / 频率<br>精确逐核时间<br>发布采样快照</small></div><div class="node"><b>③ 触发判定</b><small>所选核心合计<br>阈值 / 连续超限时长<br>前后台及有效性检查</small></div><div class="node"><b>④ 任务处理</b><small>目标身份复核<br>GIF 专项 → Future<br>实际结果确认</small></div><div class="node"><b>⑤ 展示与记录</b><small>图表 / 处理清单<br>状态与原因<br>原日志与下载导出</small></div></div>
+<div class="scroll"><table><thead><tr><th>部分</th><th>主要文件（mod/src/com/lqb9/qqwatchmod/）</th><th>边界</th></tr></thead><tbody>
+<tr><td>运行与配置</td><td><code>WatchModule、WatchRuntime、HookGateway、ModuleInfo、WatchSettings、SettingsStore、SettingsCodec</code></td><td>入口只筛选 QQ 并创建运行容器。HookGateway 保存真实句柄，按反射方法去重；配置读写不依赖入口。</td></tr>
+<tr><td>负载采样</td><td><code>MonitorEngine、QqLoadSampler、CoreCollector、CoreTracker、QqCpuTracker、ThreadCpuTracker、CoreFrequency、LoadSnapshot</code></td><td>QQ 主进程仅一份采样 worker；root 精确采集器仍是独立进程。采样循环通过回调取得面板状态和发送提示。</td></tr>
+<tr><td>触发判定</td><td><code>CpuLoadMonitor、LoadPolicy</code></td><td>纯 Java 计算时长与处理资格、选择未受保护目标；不读文件、不注册 Hook。</td></tr>
+<tr><td>任务处理</td><td><code>TaskServices、TaskObservationHooks、GifHookAdapter、GifHostAdapter、TaskBridge、TaskRuleRegistry、GifHandlingRule、FutureHandlingRule</code></td><td>业务观察、QQ 接口适配、控制协议和规则分开。先做身份/配置/时效复核，再执行规则，等待真实结果。</td></tr>
+<tr><td>展示与记录</td><td><code>PanelEntryHooks、WatchPanel、MonitorState、MonitorReport、StatusTableView、DashboardView、WatchLog、DownloadExporter</code></td><td>界面读快照和处理历史，保存设置后唤醒采样。表格会话清单不导出，诊断沿用原日志。</td></tr>
+</tbody></table></div></section>
+<section class="card"><h2>一次处理如何走完</h2><ol>
+<li><b>读取有效采样：</b>独立采集器提供 QQ 同 UID 的实际逐核运行时间；采样引擎合计用户勾选核心的负载。</li>
+<li><b>达到处理条件：</b>严格超过阈值，连续有效超限达到所设时长。前后台沿用同一阈值和时长；数据无效或前后台未知时暂停处理。</li>
+<li><b>复核目标：</b>TaskBridge 在目标进程确认 PID/TID 启动身份、UID、配置、窗口和请求时效，排除受保护线程。</li>
+<li><b>按顺序匹配规则：</b>先检查 GIF 对象的完整执行窗口与所选核心贡献，符合条件时调用已验证的 QQ 停止接口；不适用时进入标准 Future 协作取消。专项归属不足等已明确拒绝的结果直接结束，不取消另一项任务。</li>
+<li><b>确认并展示：</b>GIF 无在途渲染且已停止播放，或 Future 实际返回，才显示成功状态；仍运行、任务变化、无法处理保留真实原因并回到清单。诊断进入原日志。</li>
+</ol><div class="callout">新增业务规则时，实现 <code>TaskHandlingRule</code> 并加入 <code>TaskRuleRegistry</code> 的明确顺序；只有“不适用”返回空结果。QQ 接口和启动保护分别放到适配层与 Hook 层，保留目标身份复核和实际结果确认。</div></section>
+<section class="card"><h2>生命周期与已有行为</h2><div class="scroll"><table><thead><tr><th>项目</th><th>v1.25 行为</th></tr></thead><tbody>
+<tr><td>重复初始化</td><td>入口和运行容器均有一次启动保护。同一个 Method 不重复安装；只有成功拿到真实句柄才登记。</td></tr>
+<tr><td>启动失败清理</td><td>构造/启动异常被入口捕获。停止模块自身采样线程，清除面板入口和控制接收器，再释放已注册 Hook；释放失败保留对应句柄可重试。</td></tr>
+<tr><td>暂停中的 GIF</td><td>仍有暂停租约时保留启动保护 Hook，避免清理中解除对已暂停对象的保护。用户恢复、关闭监控或配置变化的原恢复路径保留。</td></tr>
+<tr><td>监控开关</td><td>关闭负载处理仍保留既有诊断路径，降低采样频率；这个开关不代表卸载整套 Hook。</td></tr>
+<tr><td>采样/显示</td><td>CPU0—7可选；单核100%；可设合计阈值、持续时长0—3600秒、采样间隔。线程数量与频率不参与负载触发；图表和处理表样式沿用。</td></tr>
+<tr><td>日志/表格</td><td>监控日志4份×512KiB滚动，明细页导出到 <code>Download/QQWatchdog/</code>。处理表最近100条，仅本次QQ会话保留，不导出。</td></tr>
+</tbody></table></div><p>安装前后配置文本一致，保留手机当前设置：</p><pre>cpu=285
+duration=3
+interval=2
+cores=255
+action=stop_task</pre></section>
+<section class="card"><h2>验证结果与范围</h2><div class="scroll"><table><thead><tr><th>验证</th><th>结果</th><th>说明</th></tr></thead><tbody>
+<tr><td>JVM 回归</td><td class="ok">319 项通过</td><td>原295项；新增24项配置迁移、触发资格、受保护目标、GIF/Future规则顺序与任务切换检查。</td></tr>
+<tr><td>Android 生产协议</td><td class="ok">26 个案例通过</td><td>原23项；新增真实Android原子配置、Hook句柄/运行容器所有权、控制接收器解绑和重绑。实际Downloads导出通过。Hook后端和GIF任务使用隔离夹具，不作用于QQ。</td></tr>
+<tr><td>源码边界</td><td class="ok">通过</td><td>21个采集、判定、任务证据、图表/表格、日志等核心文件与v1.24逐字节一致；只有HookGateway调用框架hook，入口无消费者依赖，规则不依赖Android/Xposed。</td></tr>
+<tr><td>本机安装</td><td class="ok">v1.25 / vc26</td><td>2026-10-02T18:30:43；原签名覆盖安装，已装APK哈希一致，QQ加载新运行容器与执行观察，独立精确采集恢复，设置保留。</td></tr>
+<tr><td>实际异常停止</td><td>仍待故障机验证</td><td>本轮整理架构，没有增加通用强杀线程能力。普通Handler/原生任务没有已验证停止接口时仍如实报告；故障机GIF实际停止、降载与长期功耗仍待验证。</td></tr>
+</tbody></table></div></section>
+<section class="card"><h2>文件与校验</h2><p><a href="QQ负载监控.apk">QQ负载监控.apk</a> · <a href="QQ负载监控-v1.25.apk">保留版本号的APK</a> · <a href="SHA256SUMS.txt">交付文件SHA-256</a></p>
+<p>APK大小 <b>164,870 B</b>；原签名SHA-256为 <code>48F60554AE19D3EBE51F98C25F0999A948EA7B40A349CC6E22B813F482EC268F</code>。</p><pre>4B076B7430A1EC0EA201DEF65FFF8ADE98671D487B5518D11A1E472F71FB0159</pre>
+<p class="muted">源代码：D:\deepseek\qq-watchdog。此次为本地开发与装机验证，GitHub/云盘仍是此前发布版本。</p></section>
+</main></body></html>

@@ -44,6 +44,9 @@ public final class CoreCheck extends Instrumentation {
             int valid=0; double minimumRemoved=10000; double maximumAll=0;
             for(int i=0;i<8;i++) {
                 CoreSnapshot snap=CoreSnapshot.decode(CoreCollector.read(new File("/data/local/tmp/qqcore-controlled/watchdog.core")));
+                if(snap.diagnostics==null || !snap.diagnostics.details.contains("traceRuntimeNs=")
+                        || !snap.diagnostics.details.contains("lossPerCore=[") || !snap.diagnostics.details.contains("aligned=bracketed")
+                        || !snap.diagnostics.details.contains("procCpuUpperNs=")) throw new AssertionError("aligned collector timing/loss evidence missing");
                 CoreTracker.Result small=selected.sample(snap,3,android.os.Process.myUid(),SystemClock.elapsedRealtime(),1);
                 CoreTracker.Result total=all.sample(snap,7,android.os.Process.myUid(),SystemClock.elapsedRealtime(),1);
                 if(small!=null && total!=null && small.cpu>=0 && total.cpu>=0) {
@@ -57,7 +60,7 @@ public final class CoreCheck extends Instrumentation {
             }
             if(valid<3 || minimumRemoved<20)throw new AssertionError("not enough pinned samples: "+valid+",removed="+minimumRemoved);
             result.putString("stream","PASS controlled per-core samples="+valid+"; unselected CPU2 minimum removed="+minimumRemoved
-                    +"%; total maximum="+maximumAll+"%; other UIDs excluded; QQ untouched\n");finish(-1,result);
+                    +"%; total maximum="+maximumAll+"%; collector timing/loss evidence present; other UIDs excluded; QQ untouched\n");finish(-1,result);
         }catch(Throwable e){result.putString("stream","FAILED "+e);finish(1,result);}
         finally{stop.set(true);for(Thread worker:workers)try{worker.join(2000);}catch(Exception ignored){}}
     }

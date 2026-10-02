@@ -1,0 +1,29 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QQ负载监控 v1.24 · GIF专项处理与验证</title><style>
+body{max-width:860px;margin:auto;padding:24px 16px 50px;background:#f5f6fa;color:#273041;font:15px/1.85 "Microsoft YaHei",system-ui,sans-serif}h1{font-size:27px;color:#d63173}h2{font-size:19px;margin:0 0 12px}.card{background:white;border:1px solid #e4e7ee;border-radius:16px;padding:20px;margin:18px 0}li{margin:7px 0}code,pre{overflow-wrap:anywhere;font-family:Consolas,monospace}pre{white-space:pre-wrap;background:#f5f6fa;padding:12px;border-radius:8px}a{color:#cb2a69}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;padding:9px;border:1px solid #e5e7ef}th{background:#fff0f6}.note{color:#7d3d57;background:#fff0f6;padding:12px;border-radius:10px}</style></head><body>
+<h1>QQ负载监控 v1.24</h1><p>GIF专项处理测试版 · versionCode 25 · 2026-10-02</p>
+<div class="card"><h2>这次能处理什么</h2><p>针对日志中反复短时执行的 <code>com.tencent.libra.extension.gif.RenderTask.run</code>，沿用当前负载规则定位对应的 GIF 对象，通过其公开 <code>GifDrawable.stop()</code> 接口停止播放，并拦截该对象后续的启动及渲染。即使上一帧任务已经返回，只要同一采样窗口内的执行证据和对象仍有效，也可以处理。</p><p>处理后的 GIF 会停在当前画面。QQ 进程与线程池工作线程保留，其他 GIF 对象可继续运行。该规则不能证明线程泄露，也不支持任意原生线程的强制终结。</p></div>
+<div class="card"><h2>触发口径</h2><table><tr><th>项目</th><th>规则</th></tr>
+<tr><td>监控对象与核心</td><td>仅 QQ 同 UID 的进程；CPU0—7 可选，按所选核心的实际 CPU 时间合计，单核满载100%。</td></tr>
+<tr><td>阈值与时长</td><td>严格超过设置阈值，并达到设置的连续超限时长。阈值默认200%，持续0—3600秒可设；0秒在首轮有效超限尝试处理。</td></tr>
+<tr><td>前后台</td><td>前台与后台共用阈值和持续时长。无法确认前后台、采样过期或不完整时暂停处理。</td></tr>
+<tr><td>GIF归属</td><td>按真实TID/Java线程映射匹配完整窗口的RenderTask业务执行；已观测GIF业务CPU至少占目标线程全核CPU的50%；再扣除该线程全部未选核心CPU，剩余的GIF贡献保守下限必须达到所选核心线程负载的50%。这只用于业务归属判断，超限仍按所选核心计算。</td></tr>
+<tr><td>调用前复核</td><td>检查PID/TID启动身份、UID、采样时效、配置和GIF公开接口；不按线程名称猜任务，不取消已经换成其他业务的Future。</td></tr>
+<tr><td>边界</td><td>单次最多处理3个有证据的GIF对象；每进程最多保留32个暂停对象。同一未成功线程身份沿用10秒重试间隔。</td></tr></table>
+<p>连续超限时长按有效采样窗口累计。例如采样2秒、要求5秒，通常在累计达到6秒的有效采样处理。回落、无效、长间断、关闭或配置变化会重新计时。日志的执行观察有界且仅保留最近10秒；没有足够证据的长采样窗口不会猜测GIF归属。</p></div>
+<div class="card"><h2>开关与恢复</h2><ol><li>设置页新增 <strong>GIF专项处理：开启 / 关闭</strong>，默认开启。点击切换后保存设置，现有阈值、持续时长和采样间隔仍可自行调整。</li><li>处理页新增 <strong>恢复已暂停 GIF</strong>，向QQ各进程发出恢复请求，表格等待目标的实际回执。</li><li>关闭监控、关闭GIF专项或更改监控配置时，自动解除已有暂停。QQ重启后暂停记录清空。负载回落本身不会自动恢复，避免反复停止和播放。</li></ol><p>恢复只主动启动仍有效、可见且当前渲染已返回的对象。不可见、已释放或渲染尚未返回的对象只解除拦截，不主动重播；该状态在详情中列明。</p></div>
+<div class="card"><h2>表格中的状态</h2><table><tr><th>显示</th><th>含义</th></tr>
+<tr><td>GIF待确认</td><td>已调用停止接口，但渲染仍在执行或播放状态未停止。</td></tr>
+<tr><td>GIF仍在运行</td><td>5秒内当前渲染未返回，继续等待；没有记为停止成功。</td></tr>
+<tr><td>GIF已暂停</td><td>对应对象已停止播放，已观察的正在渲染数为0。</td></tr>
+<tr><td>GIF处理失败</td><td>停止接口调用或状态读取失败，未确认停止。</td></tr>
+<tr><td>GIF已解除暂停 / GIF恢复失败</td><td>已释放对象拦截，并列明实际恢复播放、不可见/已释放、渲染未返回和失败数量。</td></tr></table>
+<p>表格保留完整线程/PID/TID、QQ合计与线程自身负载、核心/当时阈值、前后台/时长、业务执行证据及对象处理结果。只有确认暂停后的完整有效采样窗口，才追加“复采QQ合计”。复采反映整体QQ负载，下降本身不能单独证明因果。</p><p>处理状态清单仍只保留最近100条，不增加清单导出。原监控日志新增 <code>GIF_RULE</code> 和 <code>GIF_CHECK</code> 生命周期/复采诊断，沿用明细页“导出日志到下载目录”，路径为 <code>Download/QQWatchdog</code>。</p></div>
+<div class="card"><h2>验证结果与限制</h2><ul><li><strong>295项JVM检查通过。</strong>新增69项覆盖对象匹配、短任务窗口归属、开关、边界、重新调度拦截及恢复。</li><li><strong>23个Android生产协议案例和实际下载导出通过。</strong>包含前后台持续时长、已返回短任务、渲染5秒仍运行后再确认暂停、配置复核、错误归属及仅未选核心贡献拒绝、手动/关闭恢复及旧/跨动作窗口不当作复采。</li><li>原生概览7组、核心选择3组与处理表渲染通过；窄屏及放大字体检查通过。该测试使用隔离演示数据。</li><li>当前ADB手机安装回读v1.24/vc25，QQ加载新模块、精确采集器就绪；已装APK与交付APK哈希一致，原签名保持。</li><li>已只读检查当前QQ9.2.85的真实RenderTask、GifDrawable与SafeRunnable字节码，确认公开停止/启动路径。Android处理实验使用独立UID的GIF接口夹具与模拟hook执行数据，没有调用真实QQ解码器制造故障。</li></ul>
+<p class="note">故障机QQ9.2.25的实际适配和负载下降尚待验证。运行时接口不匹配会拒绝专项处理。MSF/sub_dedicated等其他未知业务、无法返回的原生解码和长期功耗不在本轮已验证范围；公开停止调用本身未返回时不会记录成功。现有标准FutureTask协作取消继续保留。</p></div>
+<div class="card"><h2>安装文件与保留的设置</h2><p><a href="QQ负载监控-v1.24.apk">QQ负载监控-v1.24.apk</a></p><p>当前连接手机已安装并重载QQ与精确采集器。其他手机安装后须启用模块并强行停止重开QQ，停止并重新启动精确采集器。</p>
+<p>本机保留设置：285%阈值、全部核心、持续3秒、采样2秒。GIF专项使用新版本默认开启，不覆盖已有负载参数。</p><pre>cpu=285
+duration=3
+interval=2
+cores=255
+action=stop_task</pre>
+<p>装机时间：2026-10-02T15:08:56<br>APK：160,774字节<br>SHA256：<code>152770FCDA25A9F9775C30BF708C889A0F211371D8D8A9A0B2F6B3C477418404</code></p></div></body></html>

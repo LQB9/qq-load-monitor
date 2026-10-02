@@ -12,19 +12,20 @@ import java.util.List;
 
 /** Overview shared by the live panel and offscreen visual checks. No fabricated live data. */
 final class DashboardView extends LinearLayout {
-    final TextView value, state, equivalent, freshness, coverage, frequencyNote;
+    final TextView value, state, equivalent, freshness, frequencyNote;
     final CpuCharts.Trend trend;
-    final CpuCharts.Cores cores;
-    final CpuCharts.Ranking threads;
+    final CpuCharts.CoreMetrics coreMetrics;
     final TextView scopeNote;
-    final CpuCharts.CoreLoad coreLoad;
+    final ThreadRuleStatusView singleRule;
+    final TextView ruleMode;
 
     DashboardView(Context c) {
         super(c);
         setOrientation(VERTICAL);
         setPadding(dp(c, 14), dp(c, 12), dp(c, 14), dp(c, 16));
         setBackgroundColor(0xFFF5F6FA);
-        LinearLayout hero = card(c, this, "所选核心的 QQ 负载", "单核 = 100%");
+        LinearLayout hero = card(c, this, "总负载持续超限规则", "所选核心");
+        ruleMode=label(c,"等待规则状态",11,CpuCharts.SUB);ruleMode.setPadding(0,0,0,dp(c,7));hero.addView(ruleMode);
         scopeNote = label(c, "等待精确核心采集", 10, CpuCharts.SUB); hero.addView(scopeNote);
         LinearLayout row = new LinearLayout(c); row.setGravity(Gravity.CENTER_VERTICAL);
         value = label(c, "—", 36, CpuCharts.INK); value.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -40,17 +41,13 @@ final class DashboardView extends LinearLayout {
         hero.addView(trend, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(c, 122)));
         freshness = label(c, "最近 60 次采样 · 缺失数据留空", 9.5f, CpuCharts.SUB); hero.addView(freshness);
 
-        LinearLayout load = card(c, this, "QQ 各核心负载", "仅 QQ CPU 时间");
-        coreLoad = new CpuCharts.CoreLoad(c); load.addView(coreLoad, match());
-        LinearLayout frequency = card(c, this, "核心当前频率", "MHz");
-        cores = new CpuCharts.Cores(c); frequency.addView(cores, match());
-        frequencyNote = label(c, "频率单独显示；核心占用率尚未采集", 10, CpuCharts.SUB);
-        frequencyNote.setPadding(0, dp(c, 5), 0, 0); frequency.addView(frequencyNote);
+        LinearLayout single = card(c, this, "单线程持续超限规则", "TOP 3");
+        singleRule = new ThreadRuleStatusView(c, 3); single.addView(singleRule, match());
 
-        LinearLayout hot = card(c, this, "热点线程 TOP 4", "按 CPU 排序");
-        threads = new CpuCharts.Ranking(c, true, 4); hot.addView(threads, match());
-        coverage = label(c, "最后核心是最近运行位置，线程可迁移", 10, CpuCharts.SUB);
-        coverage.setPadding(0, dp(c, 5), 0, 0); hot.addView(coverage);
+        LinearLayout load = card(c, this, "QQ 各核心负载", "% · MHz");
+        coreMetrics = new CpuCharts.CoreMetrics(c); load.addView(coreMetrics, match());
+        frequencyNote = label(c, "负载条 0—100% · ● 为所选核心；频率不参与阈值计算", 9.5f, CpuCharts.SUB);
+        frequencyNote.setPadding(0, dp(c, 5), 0, 0); load.addView(frequencyNote);
     }
 
     void update(CpuLoadMonitor.Sample sample, QqCpuTracker.Snapshot processes,
@@ -60,7 +57,7 @@ final class DashboardView extends LinearLayout {
         int threshold = sample == null ? 200 : sample.settings.threshold;
         boolean valid = cpu >= 0 && !stale;
         set(value, valid ? CpuCharts.percent(cpu) : "—");
-        String badge = !enabled ? "提示已暂停" : stale ? "等待更新" : !valid ? "等待采样"
+        String badge = !enabled ? "监控已暂停" : stale ? "等待更新" : !valid ? "等待采样"
                 : cpu > threshold ? "负载偏高" : "监控中";
         int color = !enabled || stale || !valid ? CpuCharts.SUB : cpu > threshold ? CpuCharts.RED : 0xFF1B9073;
         set(state, badge); state.setTextColor(color);
@@ -68,35 +65,33 @@ final class DashboardView extends LinearLayout {
         bg.setColor(!valid || !enabled ? 0xFFEDF0F5 : cpu > threshold ? 0xFFFFEBEF : 0xFFEAF7F2);
         state.setBackground(bg);
         set(equivalent, valid ? "相当于占用 " + String.format(java.util.Locale.ROOT, "%.2f", cpu / 100) + " 个核心"
-                + " · 提示阈值 " + threshold + "%" : "等待有效 CPU 数据 · 提示阈值 " + threshold + "%");
+                + " · 合计阈值 " + threshold + "%" : "等待有效 CPU 数据 · 合计阈值 " + threshold + "%");
         set(freshness, "最近 " + history.size() + "/60 次采样 · "
                 + (ageSeconds < 0 ? "等待更新" : ageSeconds + " 秒前更新")
-                + (stale ? "（已过期）" : ""));
+                + (stale ? "（已过期）" : "")
+                + (valid && enabled && sample.settings.totalRule ? "\n连续超限 "
+                + String.format(java.util.Locale.ROOT, "%.1f", sample.highMs / 1000d)
+                + " / " + sample.settings.durationSeconds + " 秒" : ""));
         trend.update(history, threshold, stale);
-        cores.update(frequency, stale);
-        boolean hardware = false, driver = false;
-        for (CoreFrequency.Core core : frequency) if (core.online && core.khz > 0) {
-            if (core.hardwareReading) hardware = true; else driver = true;
-        }
-        set(frequencyNote, (hardware && driver ? "硬件 / 驱动混合读数" : hardware ? "硬件读数" : driver ? "驱动请求频率" : "等待可读取的频率")
-                + " · 核心占用率尚未采集");
-        threads.update(threadRanks(threadData), stale);
-        set(coverage, "已扫描 " + threadData.scanned + " 个线程"
-                + (threadData.errors > 0 ? " · " + threadData.errors + " 项不可读" : "")
-                + "\n最后核心是最近运行位置，线程可迁移");
+        coreMetrics.updateFrequency(frequency, stale);
+        if(sample!=null)updateRuleSettings(sample.settings,sample,stale);
+    }
+    void updateRuleSettings(CpuLoadMonitor.Settings current,CpuLoadMonitor.Sample sample,boolean stale){
+        boolean matching=sample!=null && sample.settings.sameAs(current);
+        set(ruleMode,"合计检测 "+(current.totalRule?"开启":"关闭")+" · "+ThreadRuleReport.totalMode(current));
+        ruleMode.setTextColor(!current.enabled || !current.totalRule?CpuCharts.SUB:current.totalHandle?CpuCharts.PINK:0xFF1B9073);
+        trend.showLimit(current.enabled && current.totalRule);
+        if(!matching){set(value,"—");set(state,"等待采样");state.setTextColor(CpuCharts.SUB);set(freshness,"设置已保存，等待新配置采样；旧计时不沿用。");trend.update(java.util.Collections.<LoadHistory.Point>emptyList(),current.threshold,stale);}
+        else if(!current.enabled || !current.totalRule){set(state,"负载参考");state.setTextColor(CpuCharts.SUB);GradientDrawable bg=new GradientDrawable();bg.setColor(0xFFEDF0F5);bg.setCornerRadius(dp(getContext(),8));state.setBackground(bg);set(freshness,current.enabled?"合计检测关闭，不计时、不触发；单线程规则独立运行。":"总监控已关闭，两套规则暂停。");}
     }
 
     void updateScope(CoreTracker.Result data, int mask, boolean stale) {
         double[] unknown = {-1,-1,-1,-1,-1,-1,-1,-1};
-        coreLoad.update(data == null ? unknown : data.cores, mask, stale);
+        coreMetrics.updateLoads(data == null ? unknown : data.cores, mask, stale);
         String focus = data == null || data.snapshot == null || data.snapshot.foreground < 0 ? "前后台未知"
                 : data.snapshot.foreground == 1 ? "QQ 前台" : "QQ 后台";
         set(scopeNote, "CPU " + CoreSnapshot.selection(mask) + " · " + focus + "\n" + (data == null ? "精确采集未启用，暂停处理" : data.note));
-        set(frequencyNote, "频率与负载分别展示；频率不参与阈值计算");
-        if (data != null && data.cpu >= 0) {
-            threads.update(coreRanks(data), stale);
-            set(coverage, "所选核心上的线程 CPU 排名；原生线程名可能截断\n总负载不能单独证明线程发生泄露");
-        }
+
     }
     static List<CpuCharts.Rank> coreRanks(CoreTracker.Result data) {
         List<CpuCharts.Rank> rows = new ArrayList<CpuCharts.Rank>();

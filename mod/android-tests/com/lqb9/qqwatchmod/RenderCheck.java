@@ -16,14 +16,17 @@ import java.util.List;
 /** Isolated offscreen native rendering. Never opens a window or operates QQ. */
 public class RenderCheck extends Instrumentation {
     private boolean selectorsOnly;
+    private boolean threadRuleOnly;
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         selectorsOnly = arguments != null && "selectors".equals(arguments.getString("mode"));
+        threadRuleOnly = arguments != null && "thread-rule".equals(arguments.getString("mode"));
         start();
     }
     @Override public void onStart() {
         final Bundle result = new Bundle();
         try {
+            if(threadRuleOnly){result.putString("stream",UiRuleCheck.run(this));finish(-1,result);return;}
             runOnMainSync(new Runnable() {
                 public void run() {
                     try {
@@ -113,10 +116,13 @@ public class RenderCheck extends Instrumentation {
         }
         bitmap.recycle();
         ProcessingHistory status = new ProcessingHistory();
-        String[] states = {"待确认", "任务已结束", "仍在运行", "无法处理"};
+        String[] states = {"GIF待确认", "GIF已暂停", "GIF仍在运行", "GIF已解除暂停"};
         for (int i=0;i<4;i++) status.add(new ProcessingHistory.Row("demo"+i,System.currentTimeMillis(),
                 new CoreSnapshot.Counter(23430,100,27049+i,200,i==3 ? "GifRenderingExe" : "pool-40-thread-",new long[8]),15,253.9,62.1,
-                "QQ 后台超限",states[i],"演示处理状态"));
+                200,"QQ 后台超限 · 持续5秒，要求5秒",states[i],i==3 ? "手动恢复 · 恢复播放=1 · 不可见/已释放=0 · 渲染未返回=0 · 失败=0。不可见、已释放或渲染未返回对象不主动重播。" : i==1 ? "GIF对象=3 · 正在渲染=0 · 仍播放=0 · 已拦截后续渲染=18；仅暂停对应GIF，工作线程保留。可从处理页恢复。\n复采QQ合计=72.5% · 已回落至阈值内" : "GIF对象=1 · 正在渲染=1 · 仍播放=0；已请求暂停，等待原渲染返回。尚不能确认停止。",
+                i==3 ? "GifRenderingExecutor-worker-003" : "pool-40-thread-"+(i+1),
+                "task#21 BusinessGifWorker.run · 窗口 8 次 / 125.0ms CPU · 近10秒 64 次 · fixed-rate",
+                "business=com.tencent.example.BusinessGifWorker.run schedule=fixed-rate periodMs=40 windowRuns=8 executionStack=BusinessGifWorker.run [执行入口]；全部核心参考，不参与所选核心阈值判定"));
         StatusTableView table = new StatusTableView(context);table.update(status);
         table.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));
         table.layout(0,0,width,table.getMeasuredHeight());

@@ -3,6 +3,7 @@
 # NOTE: ASCII only. PowerShell 5.1 reads a BOM-less .ps1 as GBK; non-ASCII bytes corrupt the parse.
 
 $ErrorActionPreference = 'Stop'
+if (-not $env:QQWATCH_SIGN_PASSWORD) { throw 'Set QQWATCH_SIGN_PASSWORD locally before signing' }
 
 $root = 'D:\deepseek\qq-watchdog\mod'
 $sdk  = 'D:\deepseek\_work\android-sdk'
@@ -19,7 +20,9 @@ foreach ($j in @($apiJar, $ifJar, $svcJar)) {
 }
 
 $out = "$root\build"
-if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+$resolvedBuild = [IO.Path]::GetFullPath($out)
+if ($resolvedBuild -ne 'D:\deepseek\qq-watchdog\mod\build') { throw 'Unexpected production build path' }
+if (Test-Path -LiteralPath $resolvedBuild) { Remove-Item -LiteralPath $resolvedBuild -Recurse -Force }
 New-Item -ItemType Directory -Force -Path "$out\classes" | Out-Null
 New-Item -ItemType Directory -Force -Path "$out\dex" | Out-Null
 
@@ -49,7 +52,7 @@ if (-not (Test-Path $ks)) {
     Write-Host "[1/6] generating signing key"
     RunExe "$jh\bin\keytool.exe" @(
         '-genkeypair', '-keystore', $ks, '-alias', 'qqwatchmod',
-        '-storepass', 'qqwatchmod123', '-keypass', 'qqwatchmod123',
+        '-storepass:env', 'QQWATCH_SIGN_PASSWORD', '-keypass:env', 'QQWATCH_SIGN_PASSWORD',
         '-keyalg', 'RSA', '-keysize', '2048', '-validity', '3650',
         '-dname', 'CN=qqwatchmod,O=self,C=CN'
     ) 'keytool' | Out-Null
@@ -111,7 +114,7 @@ $zip.Dispose()
 Write-Host "[6/6] zipalign + sign"
 RunExe "$bt\zipalign.exe" @('-f', '-p', '4', $staging, "$out\aligned.apk") 'zipalign' | Out-Null
 RunExe "$bt\apksigner.bat" @(
-    'sign', '--ks', $ks, '--ks-pass', 'pass:qqwatchmod123', '--key-pass', 'pass:qqwatchmod123',
+    'sign', '--ks', $ks, '--ks-pass', 'env:QQWATCH_SIGN_PASSWORD', '--key-pass', 'env:QQWATCH_SIGN_PASSWORD',
     '--ks-key-alias', 'qqwatchmod', '--out', "$out\qqwatchmod.apk", "$out\aligned.apk"
 ) 'apksigner' | Out-Null
 RunExe "$bt\apksigner.bat" @('verify', '--print-certs', "$out\qqwatchmod.apk") 'verify' | Out-Null

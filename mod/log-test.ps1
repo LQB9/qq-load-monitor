@@ -12,7 +12,7 @@ function Checked($file, $arguments) {
     & $file @arguments
     if ($LASTEXITCODE -ne 0) { throw "Failed: $file" }
 }
-$sources = @('RollingLog.java','DownloadExporter.java','WatchLog.java') | ForEach-Object { Join-Path $sourceDir $_ }
+$sources = @('RollingLog.java','DownloadExporter.java','WatchLog.java','CoreSamplingDiagnostics.java','CoreSnapshot.java') | ForEach-Object { Join-Path $sourceDir $_ }
 $sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\DownloadCheck.java'
 Checked "$javaBin\javac.exe" (@('--release','8','-Xlint:-options','-encoding','UTF-8','-classpath',$aj,'-d',"$OutputDirectory\classes") + $sources)
 Checked "$javaBin\jar.exe" @('cf',"$OutputDirectory\classes.jar",'-C',"$OutputDirectory\classes",'.')

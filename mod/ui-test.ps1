@@ -12,8 +12,12 @@ function Checked($file, $arguments) {
     & $file @arguments
     if ($LASTEXITCODE -ne 0) { throw "Failed: $file" }
 }
-$sources = @('CpuLoadMonitor.java','QqCpuTracker.java','ThreadCpuTracker.java','CoreFrequency.java','LoadHistory.java','CpuCharts.java','DashboardView.java','CoreSnapshot.java','CoreTracker.java','ProcessingHistory.java','StatusTableView.java','CoreSelectorView.java') | ForEach-Object { Join-Path $sourceDir $_ }
+$sources = @('CpuLoadMonitor.java','QqCpuTracker.java','ThreadCpuTracker.java','CoreFrequency.java','LoadHistory.java','CpuCharts.java','DashboardView.java','CoreSamplingDiagnostics.java','CoreSnapshot.java','CoreTracker.java','ProcessingHistory.java','StatusTableView.java','CoreSelectorView.java','LoadPolicy.java','ThreadLoadMonitor.java','ThreadRuleDisplay.java','ThreadRuleStatusView.java','ThreadRuleSettingsView.java','LoadRuleSettingsView.java') | ForEach-Object { Join-Path $sourceDir $_ }
 $sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\RenderCheck.java'
+$sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\UiRuleCheck.java'
+$sources += @('StateSwitchView.java','CollectorStatus.java','CollectorSwitchView.java','ThreadRuleReport.java','RootControl.java','MonitorSettingsView.java','MonitoringDetailView.java') | ForEach-Object { Join-Path $sourceDir $_ }
+$sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\CollectorStatusProbe.java'
+$sources += @('ThreadLoadHistory.java','ThreadTrendView.java') | ForEach-Object { Join-Path $sourceDir $_ }
 Checked "$javaBin\javac.exe" (@('--release','8','-Xlint:-options','-encoding','UTF-8','-classpath',$aj,'-d',"$OutputDirectory\classes") + $sources)
 Checked "$javaBin\jar.exe" @('cf',"$OutputDirectory\classes.jar",'-C',"$OutputDirectory\classes",'.')
 Checked "$bt\d8.bat" @('--release','--min-api','26','--lib',$aj,'--output',"$OutputDirectory\dex","$OutputDirectory\classes.jar")

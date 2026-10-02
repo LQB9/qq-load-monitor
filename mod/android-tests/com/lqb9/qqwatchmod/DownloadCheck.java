@@ -65,6 +65,18 @@ public final class DownloadCheck extends Instrumentation {
 
             WatchLog.start(new File(context.getCacheDir(), "async-log-" + System.currentTimeMillis()), "TEST SESSION");
             WatchLog.record("EVENT", "QUEUED EVENT 中文");
+            CoreSamplingDiagnostics evidence = new CoreSamplingDiagnostics("android-fixture");
+            long originalTime = System.currentTimeMillis() - 4000;
+            evidence.observe("VALID","OK","TEST FIXTURE",originalTime-1000,1000);
+            evidence.observe("INCOMPLETE","TRACE_LOSS,CPU_TIME_MISMATCH",
+                    "TEST FIXTURE lossDelta=7 procCpuNs=900000000 traceRuntimeNs=100000000 中文",originalTime,2000);
+            CoreSamplingDiagnostics.Report recovered = evidence.observe("VALID","OK","TEST FIXTURE",originalTime+2000,4000);
+            CoreSnapshot wire = new CoreSnapshot("fixture",android.os.Process.myUid(),10,4000,4000000000L,
+                    true,0,"running",new long[8],java.util.Collections.emptyList(),recovered);
+            CoreSamplingDiagnostics.Forwarder forwarder = new CoreSamplingDiagnostics.Forwarder();
+            CoreSamplingDiagnostics.Report decoded = CoreSnapshot.decode(wire.encode()).diagnostics;
+            forwarder.forward(decoded,WatchLog::recordAt);
+            forwarder.forward(decoded,WatchLog::recordAt);
             final CountDownLatch done = new CountDownLatch(1); final String[] outcome = new String[2];
             check(WatchLog.export(context, "ASYNC HEADER\n", new WatchLog.Callback() {
                 public void done(String path, String error) { outcome[0] = path; outcome[1] = error; done.countDown(); }
@@ -75,6 +87,12 @@ public final class DownloadCheck extends Instrumentation {
             check(async.startsWith("ASYNC HEADER") && async.contains("TEST SESSION")
                     && async.contains("QUEUED EVENT 中文") && async.contains("请求导出日志"), "queued records flushed before export");
             check(!WatchLog.isExporting() && WatchLog.status().contains("自动记录"), "async status recovers after export");
+            check(async.contains("CORE_PAUSE") && async.contains("CORE_RECOVER") && async.contains("lossDelta=7"),
+                    "production queue and Downloads export preserve short pause and recovery");
+            check(async.indexOf("CORE_PAUSE") == async.lastIndexOf("CORE_PAUSE"), "retained events are not exported twice");
+            String originalStamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z",java.util.Locale.ROOT)
+                    .format(new java.util.Date(originalTime));
+            check(async.contains(originalStamp), "delayed replay preserves original collector wall time");
             result.putString("stream", "PASS " + checks + " Android download/log checks; no storage permission; no foreground window\n");
         } catch (Throwable failure) { result.putString("stream", "FAILED " + failure); }
         finally {

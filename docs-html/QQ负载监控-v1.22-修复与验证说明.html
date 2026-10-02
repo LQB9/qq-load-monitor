@@ -1,0 +1,41 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QQ负载监控 v1.22 · 修复与验证</title><style>
+body{max-width:880px;margin:auto;padding:24px 16px 50px;background:#f5f6fa;color:#273041;font:15px/1.85 "Microsoft YaHei",system-ui,sans-serif}
+h1{font-size:28px;color:#d63173}h2{font-size:20px;margin:0 0 12px}p{margin:10px 0}.card{background:white;border:1px solid #e4e7ee;border-radius:16px;padding:20px;margin:18px 0}
+.tag{display:inline-block;padding:3px 12px;border-radius:15px;background:#fff0f6;color:#c32968}li{margin:7px 0}code{overflow-wrap:anywhere;font-family:Consolas,monospace}a{color:#cb2a69}
+table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;padding:10px;border:1px solid #e5e7ef;overflow-wrap:anywhere}th{background:#fff0f6}.muted{color:#657083}
+@media(max-width:600px){body{padding:16px 10px}.card{padding:16px 12px}td,th{padding:7px}h1{font-size:24px}}
+</style></head><body><h1>QQ负载监控 v1.22</h1><p><span class="tag">versionCode 23</span> 跨进程身份复核、Handler 执行诊断、CPU 采样对齐</p>
+<div class="card"><h2>本次完成的三处调整</h2><table><tr><th>问题</th><th>现在的行为</th></tr>
+<tr><td>主进程读取 MSF 等子进程线程信息失败，被当作“已退出”。</td><td>发送请求后由目标进程读取自己的 PID/TID 启动身份；分开报告读取失败、真实退出和身份变化。主进程仍校验请求编号、目标身份与时效。</td></tr>
+<tr><td>Handler 线程事后回到消息队列等待，日志无法说明刚才执行了什么。</td><td>执行时记录 Handler 消息编号、回调路线、实际业务入口、CPU 耗时与可取得的入口栈；保留最近10秒，区分正在执行但无取消接口，以及消息已返回或切换。</td></tr>
+<tr><td>线程扫描耗时使进程 CPU 与调度计数的读取边界不同。</td><td>扫描完成后，先后读取进程 CPU，中间固定一份调度计数及其时间。使用 CPU 时间下限校验，减少读取边界偏差导致的暂停；仍保留原完整性保护。</td></tr>
+</table><p>这些修复补齐定位和判断链路。标准 FutureTask 仍按原策略协作取消并确认实际返回；普通 Handler 消息没有已验证的业务停止接口时，仍会显示具体限制。</p></div>
+<div class="card"><h2>原约定继续执行</h2><ul>
+<li>仅统计 QQ 同 UID 进程在所选 CPU 核心上的实际运行时间；CPU0—7 可任选，至少选一个。</li>
+<li>单核满载为100%；默认合计阈值200%，可设置。严格超过阈值，在首轮有效采样立即尝试处理。</li>
+<li>确认 QQ 前后台，二者共用同一阈值；按所选核心贡献定位最忙的未保护工作线程及其任务。</li>
+<li>处理记录继续使用分组表格：完整线程名、PID/TID、QQ合计与线程自身负载、核心/阈值、前后台、结果和原因；展开查看执行与失败证据。最近100条在当前 QQ 会话内保留，不导出清单。</li>
+<li>主线程、Binder、渲染、GC 和模块线程受保护。缺失、过期、丢事件或前后台未知时暂停处理。</li>
+</ul></div>
+<div class="card"><h2>新状态与日志怎样看</h2><table><tr><th>代码或字段</th><th>含义</th></tr>
+<tr><td><code>IDENTITY_READ_FAILED</code></td><td>目标进程无法读取身份；表格显示“身份未确认”，不能算作线程已退出。</td></tr>
+<tr><td><code>THREAD_EXITED</code></td><td>目标进程确认该线程目录已不存在；显示“目标已退出”，不等同于模块成功取消。</td></tr>
+<tr><td><code>PROCESS_IDENTITY_CHANGED / THREAD_IDENTITY_CHANGED</code></td><td>进程或线程启动身份变化，拒绝对旧目标发起取消。</td></tr>
+<tr><td><code>HANDLER_NO_CANCEL_INTERFACE</code></td><td>正在执行 Handler 消息，尚无已验证的取消接口。需要具体业务适配。</td></tr>
+<tr><td><code>HANDLER_TASK_NOT_ACTIVE</code></td><td>记录过消息执行，处理时消息已返回或切换，没有当前可取消任务。</td></tr>
+<tr><td><code>messageWhat / callbackRoute / routeObserved</code></td><td>消息编号、分发路线与实际业务入口是否被观测；分发被观测不代表业务方法一定已覆盖。</td></tr>
+<tr><td><code>procCpuLowerNs / procCpuUpperNs</code></td><td>与调度计数窗口对应的进程 CPU 时间上下限；兼容字段 procCpuNs 现在表示下限。</td></tr>
+<tr><td><code>aligned=bracketed / cpuReadBracketNs</code></td><td>本轮使用前后 CPU 读取夹取调度计数；读取区间单位为纳秒。</td></tr>
+</table><p>下限仍须不超过 <code>traceRuntimeNs × 1.25 + 80,000,000ns</code>。真实丢事件、CPU 时间下限超出此上限或计数回退，仍暂停处理；不会把缺失调度记录当作有效核心负载。</p>
+<p>原日志与导出按钮沿用，位置仍为<strong>下载 / QQWatchdog</strong>。Handler 只记录类名、消息编号和入口信息，不读取消息 obj/data 或聊天内容。执行 CPU 是全核心诊断参考，不参与所选核心触发。</p></div>
+<div class="card"><h2>已完成的验证</h2><table><tr><th>检查</th><th>结果与范围</th></tr>
+<tr><td>本地逻辑</td><td>206项通过，包括14项 CPU/调度窗口边界检查、9项 Handler 路线与嵌套执行检查。构造的时序偏差案例用于验证算法，不代表故障机已复现。</td></tr>
+<tr><td>Android 隔离任务控制</td><td>10个生产协议案例与实际下载导出通过。覆盖普通 Handler 活动/等待、Handler 内 FutureTask 取消、同 UID 第二进程自行核对身份、拒绝旧身份和退出 TID，以及任务未响应取消不报成功。</td></tr>
+<tr><td>实际逐核采集</td><td>固定 CPU0/1/2 的隔离任务取得7个有效样本；排除未选择 CPU2 后至少移除96.8%单核贡献，全部合计最高291.1%；验证仅选定 UID、读取对齐和丢事件证据。QQ 未参与造负载测试。</td></tr>
+<tr><td>当前手机真实 QQ</td><td>QQ 9.2.85 / Android16 已加载 Handler hook。主进程 PID 26992，收到 MSF 子进程的实际执行记录；观察到 Runnable 与 handleMessage 业务入口、CPU 耗时和入口栈。精确核心采集有效，配置保留。</td></tr>
+<tr><td>包完整性</td><td>原签名验证通过，签名证书与旧版相同；当前手机安装 APK 与交付文件 SHA256 一致。临时测试包已卸载。</td></tr>
+</table><p class="muted">故障机不在现场，未宣称其 GIF/pool/HRContextQueueHandlerThread 异常已经停止。高负载本身不能证明泄露；没有专用接口的普通任务与原生线程仍需根据新日志做业务适配。</p></div>
+<div class="card"><h2>安装与后续验证</h2><p>当前 ADB 手机已装好并重载 QQ、精确采集器。故障机安装<a href="QQ负载监控-v1.22.apk">QQ负载监控-v1.22.apk</a>后，强行停止并重新打开 QQ；从桌面打开模块，停止旧精确采集后再次启动，按提示授权 root。</p>
+<p>再出现异常时，直接从明细页导出原有日志即可。重点查看目标身份、Handler 消息/业务入口、窗口归属及 CORE_* 完整性证据。</p>
+<p>安装时间：2026-10-02 00:00:03<br>验证时间：2026-10-02T00:11:59<br>APK：156,678字节<br>SHA256：<code>4D024A3F07547AC08C58203F6A0F9C4E57F2BD5D0881259BF9B45D9B3744BCA1</code></p></div></body></html>

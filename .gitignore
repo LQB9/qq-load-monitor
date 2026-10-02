@@ -17,3 +17,7 @@ _buildlog/
 *.out
 *.err
 _*
+
+# Host reference packages and disassemblies stay local
+QQ.apk*
+*.dex

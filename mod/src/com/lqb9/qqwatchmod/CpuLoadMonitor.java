@@ -9,6 +9,9 @@ final class CpuLoadMonitor {
         final int intervalSeconds;
         final String action;
         final int coreMask;
+        final boolean gifRule;
+        final boolean threadRule,threadHandle,totalRule,totalHandle;
+        final int threadThreshold,threadDuration;
 
         Settings(boolean enabled, int threshold, int durationSeconds, int intervalSeconds,
                  String action) {
@@ -16,19 +19,38 @@ final class CpuLoadMonitor {
         }
         Settings(boolean enabled, int threshold, int durationSeconds, int intervalSeconds,
                  String action, int coreMask) {
+            this(enabled,threshold,durationSeconds,intervalSeconds,action,coreMask,true);
+        }
+        Settings(boolean enabled, int threshold, int durationSeconds, int intervalSeconds,
+                 String action, int coreMask, boolean gifRule) {
+            this(enabled,threshold,durationSeconds,intervalSeconds,action,coreMask,gifRule,true,80,10,false);
+        }
+        Settings(boolean enabled,int threshold,int durationSeconds,int intervalSeconds,String action,int coreMask,
+                 boolean gifRule,boolean threadRule,int threadThreshold,int threadDuration,boolean threadHandle) {
+            this(enabled,threshold,durationSeconds,intervalSeconds,action,coreMask,gifRule,threadRule,threadThreshold,threadDuration,threadHandle,true,"stop_task".equals(action));
+        }
+        Settings(boolean enabled,int threshold,int durationSeconds,int intervalSeconds,String action,int coreMask,
+                 boolean gifRule,boolean threadRule,int threadThreshold,int threadDuration,boolean threadHandle,boolean totalRule,boolean totalHandle) {
+            this.totalRule=totalRule;this.totalHandle=totalHandle;
             this.enabled = enabled;
             this.threshold = clamp(threshold, 1, 10000);
             this.durationSeconds = clamp(durationSeconds, 0, 3600);
             this.intervalSeconds = clamp(intervalSeconds, 1, 3600);
             this.action = "stop_task".equals(action) ? "stop_task" : "record";
             this.coreMask = coreMask > 0 && coreMask <= 255 ? coreMask : 255;
+            this.gifRule = gifRule;
+            this.threadRule=threadRule;this.threadThreshold=clamp(threadThreshold,1,100);
+            this.threadDuration=clamp(threadDuration,0,3600);this.threadHandle=threadHandle;
         }
 
         boolean sameAs(Settings other) {
             return other != null && enabled == other.enabled && threshold == other.threshold
                     && durationSeconds == other.durationSeconds
                     && intervalSeconds == other.intervalSeconds
-                    && action.equals(other.action) && coreMask == other.coreMask;
+                    && action.equals(other.action) && coreMask == other.coreMask && gifRule == other.gifRule
+                    && threadRule==other.threadRule && threadHandle==other.threadHandle
+                    && threadThreshold==other.threadThreshold && threadDuration==other.threadDuration
+                    && totalRule==other.totalRule && totalHandle==other.totalHandle;
         }
 
         private static int clamp(int value, int low, int high) {
@@ -52,6 +74,14 @@ final class CpuLoadMonitor {
             this.highMs = highMs;
             this.trigger = trigger;
             this.state = state;
+        }
+
+        boolean handlingReady() {
+            return settings.totalHandle && "stop_task".equals(settings.action) && detectedReady();
+        }
+        boolean detectedReady() {
+            return settings.enabled && settings.totalRule && "reported".equals(state)
+                    && cpu > settings.threshold && highMs >= settings.durationSeconds * 1000L;
         }
     }
 
@@ -92,6 +122,7 @@ final class CpuLoadMonitor {
 
         String state;
         if (!settings.enabled) state = "off";
+        else if (!settings.totalRule) state = "rule_off";
         else if (nowMs < guardEndMs) state = "guard";
         else if (gap) state = "gap";
         else if (!valid) state = seeded ? "invalid" : "warming";

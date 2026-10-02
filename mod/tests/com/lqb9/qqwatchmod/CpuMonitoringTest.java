@@ -142,6 +142,41 @@ public final class CpuMonitoringTest {
         check(!monitor.sample(Double.POSITIVE_INFINITY, 20000, changed, 0).trigger, "infinite CPU rejected");
     }
 
+    private static void handlingDuration() {
+        CpuLoadMonitor.Settings five = new CpuLoadMonitor.Settings(true, 200, 5, 1, "stop_task");
+        CpuLoadMonitor monitor = new CpuLoadMonitor();
+        monitor.sample(-1, 0, five, 0);
+        for (int sec=1; sec<5; sec++)
+            check(!monitor.sample(250, sec*1000L, five, 0).handlingReady(), "no cancellation before second " + sec);
+        CpuLoadMonitor.Sample reached = monitor.sample(250, 5000, five, 0);
+        check(reached.handlingReady() && reached.trigger, "cancel becomes eligible at exactly five seconds");
+        CpuLoadMonitor.Sample later = monitor.sample(250, 6000, five, 0);
+        check(later.handlingReady() && !later.trigger, "later samples may retry without repeating alert");
+        CpuLoadMonitor.Sample normal = monitor.sample(200, 7000, five, 0);
+        check(!normal.handlingReady() && normal.highMs==0, "equal threshold clears handling duration");
+        check(!monitor.sample(250, 8000, five, 0).handlingReady(), "next spike does not reuse old duration");
+        CpuLoadMonitor.Sample invalid = monitor.sample(-1, 9000, five, 0);
+        check(!invalid.handlingReady() && invalid.highMs==0, "invalid sample clears handling duration");
+        check(!monitor.sample(250, 10000, five, 0).handlingReady(), "valid sample after invalid begins a new streak");
+        CpuLoadMonitor.Sample gap = monitor.sample(250, 20000, five, 0);
+        check(!gap.handlingReady() && gap.highMs==0, "sleep gap cannot complete handling duration");
+        CpuLoadMonitor.Settings immediate = new CpuLoadMonitor.Settings(true,200,0,1,"stop_task");
+        check(!monitor.sample(250,21000,immediate,0).handlingReady(), "duration change discards interval with old config");
+        check(monitor.sample(250,22000,immediate,0).handlingReady(), "zero seconds handles the next valid high interval");
+        CpuLoadMonitor.Settings off = new CpuLoadMonitor.Settings(false,200,0,1,"stop_task");
+        check(!monitor.sample(999,23000,off,0).handlingReady(), "disabled handling is never eligible");
+        CpuLoadMonitor.Settings record = new CpuLoadMonitor.Settings(true,200,0,1,"record");
+        monitor.sample(250,24000,record,0);
+        check(!monitor.sample(250,25000,record,0).handlingReady(), "record action cannot cancel");
+        CpuLoadMonitor.Settings twoStep = new CpuLoadMonitor.Settings(true,200,5,2,"stop_task");
+        monitor.reset(); monitor.sample(-1,0,twoStep,0);
+        check(!monitor.sample(250,2000,twoStep,0).handlingReady(), "two-second interval first sample waits");
+        check(!monitor.sample(250,4000,twoStep,0).handlingReady(), "four seconds waits for five-second duration");
+        check(monitor.sample(250,6000,twoStep,0).handlingReady(), "first valid sample beyond duration handles");
+        check(new CpuLoadMonitor.Settings(true,200,-5,1,"stop_task").durationSeconds==0,"negative duration clamps to zero");
+        check(new CpuLoadMonitor.Settings(true,200,4000,1,"stop_task").durationSeconds==3600,"duration upper limit is one hour");
+    }
+
     private static void history() {
         LoadHistory history = new LoadHistory();
         history.add(1000, 300, 1); history.add(2000, 200, 1);
@@ -161,7 +196,7 @@ public final class CpuMonitoringTest {
     }
 
     public static void main(String[] args) {
-        parsing(); aggregate(); threads(); frequency(); decisions(); history();
+        parsing(); aggregate(); threads(); frequency(); decisions(); handlingDuration(); history();
         System.out.println("PASS " + checks + " CPU monitoring regression checks");
     }
 }

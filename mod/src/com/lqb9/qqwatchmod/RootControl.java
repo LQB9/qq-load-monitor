@@ -7,6 +7,25 @@ import java.io.*;
 final class RootControl {
     static final String DIRECTORY = "/sdcard/Android/data/com.tencent.mobileqq/files";
     interface Callback { void done(String message); }
+    static void status(java.util.function.Consumer<CollectorStatus> callback) {
+        new Thread(() -> {
+            Process process=null;
+            try {
+                String lock=quote(DIRECTORY+"/watchdog.core.lock");
+                String command="if [ -f "+lock+" ]; then stat -c 'STAT %d %i' "+lock+" && cat /proc/locks && echo QQCOLLECTOR_LOCKS_END; else echo QQCOLLECTOR_NO_LOCK_FILE; fi";
+                process=new ProcessBuilder("su","-c",command).redirectErrorStream(true).start();
+                final Process running=process;final java.util.concurrent.atomic.AtomicBoolean finished=new java.util.concurrent.atomic.AtomicBoolean();
+                Thread guard=new Thread(()->{android.os.SystemClock.sleep(5000);if(!finished.get())running.destroy();},"qqcore-status-timeout");guard.setDaemon(true);guard.start();
+                ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[4096];int n;
+                try(InputStream in=process.getInputStream()){
+                    while((n=in.read(buffer))!=-1){if(bytes.size()+n>262144){process.destroy();break;}bytes.write(buffer,0,n);}
+                }
+                int exit=process.waitFor();finished.set(true);
+                callback.accept(CollectorStatus.parse(new String(bytes.toByteArray(),java.nio.charset.StandardCharsets.UTF_8),exit));
+            }catch(Exception error){callback.accept(CollectorStatus.unknown("采集状态读取失败："+error.getClass().getSimpleName()));}
+            finally{if(process!=null)process.destroy();}
+        },"qqcore-status").start();
+    }
     static String quote(String s) { return "'" + s.replace("'", "'\\''") + "'"; }
     static void start(Context context, Callback callback) {
         String apk = context.getApplicationInfo().sourceDir;

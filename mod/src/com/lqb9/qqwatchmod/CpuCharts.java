@@ -64,7 +64,9 @@ final class CpuCharts {
     static final class Trend extends Chart {
         List<LoadHistory.Point> points = Collections.emptyList();
         int threshold = 200;
+        boolean showLimit=true;
         Trend(Context c) { super(c); }
+        void showLimit(boolean show){showLimit=show;invalidate();}
         void update(List<LoadHistory.Point> data, int threshold, boolean stale) {
             this.points = data;
             this.threshold = threshold;
@@ -90,9 +92,9 @@ final class CpuCharts {
             float limitY = bottom - (float) (threshold / ceiling) * (bottom - top);
             paint.setColor(RED); paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(d(1));
             paint.setPathEffect(new DashPathEffect(new float[]{d(4), d(3)}, 0));
-            c.drawLine(left, limitY, right, limitY, paint);
+            if(showLimit)c.drawLine(left, limitY, right, limitY, paint);
             paint.setPathEffect(null);
-            text(c, "提示线 " + threshold + "%", right, d(12), RED, 10, Paint.Align.RIGHT);
+            text(c, showLimit?"合计阈值 " + threshold + "%":"合计检测关闭 · 负载参考", right, d(12), showLimit?RED:SUB, 10, Paint.Align.RIGHT);
             if (points.isEmpty()) {
                 text(c, "等待有效采样", (left + right) / 2, (top + bottom) / 2, SUB, 12, Paint.Align.CENTER);
                 return;
@@ -108,7 +110,7 @@ final class CpuCharts {
                 float y = bottom - (float) (p.cpu / ceiling) * (bottom - top);
                 if (previous && p.connected) path.lineTo(x, y); else path.moveTo(x, y);
                 previous = true;
-                paint.setStyle(Paint.Style.FILL); paint.setColor(dataColor(p.cpu >= threshold ? RED : PINK));
+                paint.setStyle(Paint.Style.FILL); paint.setColor(dataColor(showLimit && p.cpu >= threshold ? RED : PINK));
                 c.drawCircle(x, y, d(points.size() < 4 ? 3 : 1.6f), paint);
             }
             paint.setColor(dataColor(PINK)); paint.setStyle(Paint.Style.STROKE);
@@ -120,6 +122,35 @@ final class CpuCharts {
         }
     }
 
+    static final class ThreadTrend extends Chart {
+        static final int[] COLORS={PINK,BLUE,0xFF1B9073};
+        List<ThreadLoadHistory.Frame> frames=Collections.emptyList();List<CoreTracker.Detail> identities=Collections.emptyList();int threshold=80;
+        ThreadTrend(Context c){super(c);}
+        void update(List<ThreadLoadHistory.Frame> points,List<CoreTracker.Detail> ids,int threshold,boolean stale){
+            frames=points;identities=ids;this.threshold=threshold;this.stale=stale;
+            StringBuilder text=new StringBuilder("单线程所选核心负载趋势，阈值 "+threshold+"%。每条曲线按独立启动身份。");
+            for(CoreTracker.Detail t:ids){text.append(t.thread.name).append(" PID ").append(t.thread.pid).append(" TID ").append(t.thread.tid).append("：");for(ThreadLoadHistory.Frame f:points){ThreadLoadHistory.Reading r=f.threads.get(t.thread.key());text.append(r==null?"缺失；":percent(r.cpu)+"；");}}
+            setContentDescription(text);invalidate();
+        }
+        @Override protected void onDraw(Canvas c){
+            double scale=100;for(CoreTracker.Detail t:identities)for(ThreadLoadHistory.Frame f:frames){ThreadLoadHistory.Reading r=f.threads.get(t.thread.key());if(r!=null)scale=Math.max(scale,Math.ceil(r.cpu/50)*50);}
+            float left=d(41),right=getWidth()-d(8),top=d(25),bottom=getHeight()-d(24);
+            for(int i=0;i<3;i++){float y=bottom-(bottom-top)*i/2;line(c,left,y,right,y,LINE);text(c,String.format(Locale.ROOT,"%.0f%%",scale*i/2),left-d(6),y+d(3),SUB,9,Paint.Align.RIGHT);}
+            paint.setColor(RED);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(d(1));paint.setPathEffect(new DashPathEffect(new float[]{d(4),d(3)},0));float y=bottom-(float)(threshold/scale)*(bottom-top);c.drawLine(left,y,right,y,paint);paint.setPathEffect(null);
+            text(c,"单线程阈值 "+threshold+"%",right,d(12),RED,10,Paint.Align.RIGHT);
+            if(frames.isEmpty()){text(c,"等待线程趋势采样",(left+right)/2,(top+bottom)/2,SUB,11,Paint.Align.CENTER);return;}
+            long first=frames.get(0).elapsedMs,last=frames.get(frames.size()-1).elapsedMs,span=Math.max(1000,last-first);boolean any=false;
+            for(int i=0;i<identities.size();i++){
+                String key=identities.get(i).thread.key();Path path=new Path();boolean previous=false;
+                for(ThreadLoadHistory.Frame f:frames){ThreadLoadHistory.Reading r=f.threads.get(key);if(r==null){previous=false;continue;}any=true;float x=frames.size()==1?right:left+(right-left)*(f.elapsedMs-first)/span;float v=bottom-(float)(r.cpu/scale)*(bottom-top);
+                    if(previous && f.connected)path.lineTo(x,v);else path.moveTo(x,v);previous=true;paint.setStyle(Paint.Style.FILL);paint.setColor(dataColor(COLORS[i]));c.drawCircle(x,v,d(2),paint);
+                }
+                paint.setStyle(Paint.Style.STROKE);paint.setPathEffect(null);paint.setStrokeWidth(d(2));paint.setColor(dataColor(COLORS[i]));c.drawPath(path,paint);
+            }
+            if(!any)text(c,"当前线程还没有历史点",(left+right)/2,(top+bottom)/2,SUB,10,Paint.Align.CENTER);
+            text(c,(last-first)/1000+" 秒前",left,getHeight()-d(5),SUB,9,Paint.Align.LEFT);text(c,"最近采样",right,getHeight()-d(5),SUB,9,Paint.Align.RIGHT);
+        }
+    }
     static final class Cores extends Chart {
         List<CoreFrequency.Core> cores = Collections.emptyList();
         Cores(Context c) { super(c); }
@@ -177,6 +208,36 @@ final class CpuCharts {
                 if (loads[i] >= 0) bar(c, x, y+d(8), x+cell*(float)Math.min(1, loads[i]/100), y+d(14), dataColor(selected ? PINK : 0xFFCBD0DC));
             }
             text(c, "每核 0—100% · ● 计入合计", 0, getHeight()-d(3), SUB, 9, Paint.Align.LEFT);
+        }
+    }
+    /** Load bars and MHz labels share a core row, with independent units and no frequency scaling. */
+    static final class CoreMetrics extends Chart {
+        double[] loads = {-1,-1,-1,-1,-1,-1,-1,-1};
+        List<CoreFrequency.Core> frequencies = Collections.emptyList();
+        int mask=255,columns=1;
+        CoreMetrics(Context c){super(c);}
+        void updateLoads(double[] values,int selected,boolean stale){loads=values.clone();mask=selected;this.stale=stale;describe();invalidate();}
+        void updateFrequency(List<CoreFrequency.Core> data,boolean stale){frequencies=data;this.stale=stale;describe();invalidate();}
+        CoreFrequency.Core frequency(int id){for(CoreFrequency.Core c:frequencies)if(c.id==id)return c;return null;}
+        String frequencyLabel(int id){CoreFrequency.Core c=frequency(id);return c==null?"频率 —":!c.online?"离线":c.khz<=0?"频率不可读":c.khz/1000+" MHz";}
+        void describe(){StringBuilder s=new StringBuilder(stale?"上次采样已过期。":"QQ 各核心负载，单核100%。");for(int i=0;i<8;i++){CoreFrequency.Core f=frequency(i);s.append("CPU ").append(i).append((mask&(1<<i))!=0?" 已选择，":" 未选择，").append(loads[i]<0?"负载未知":percent(loads[i])).append("，").append(frequencyLabel(i)).append(f==null?"。":f.hardwareReading?" 硬件读数。":" 驱动请求。");}setContentDescription(s);}
+        @Override protected void onMeasure(int width,int height){int w=View.MeasureSpec.getSize(width);columns=w/density>=280 && font<=1.15f?2:1;setMeasuredDimension(w,(int)d((8/columns)*(columns==2?58:36*font)));}
+        @Override protected void onDraw(Canvas c){
+            float cell=(getWidth()-d(columns==2?18:0))/columns;
+            for(int i=0;i<8;i++){
+                boolean selected=(mask&(1<<i))!=0;float x=(i%columns)*(cell+d(18)),y=(i/columns)*d(columns==2?58:36*font)+d(14*font);
+                text(c,(selected?"● ":"○ ")+"CPU "+i,x,y,selected?INK:SUB,10,Paint.Align.LEFT);
+                String load=loads[i]<0?"—":percent(loads[i]);
+                if(columns==2){
+                    text(c,load,x+cell,y,dataColor(selected?PINK:SUB),10,Paint.Align.RIGHT);
+                    bar(c,x,y+d(7),x+cell,y+d(12),LINE);if(loads[i]>=0)bar(c,x,y+d(7),x+cell*(float)Math.min(1,loads[i]/100),y+d(12),dataColor(selected?PINK:0xFFCBD0DC));
+                    text(c,frequencyLabel(i),x,y+d(27),SUB,9.5f,Paint.Align.LEFT);
+                }else{
+                    text(c,load,x+cell*.55f,y,dataColor(selected?PINK:SUB),10,Paint.Align.RIGHT);
+                    text(c,frequencyLabel(i),x+cell,y,SUB,9.5f,Paint.Align.RIGHT);
+                    bar(c,x,y+d(7),x+cell,y+d(12),LINE);if(loads[i]>=0)bar(c,x,y+d(7),x+cell*(float)Math.min(1,loads[i]/100),y+d(12),dataColor(selected?PINK:0xFFCBD0DC));
+                }
+            }
         }
     }
     static final class Rank {

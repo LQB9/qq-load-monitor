@@ -9,13 +9,18 @@ $env:JAVA_HOME = Split-Path $javaBin
 $sourceDir = Join-Path $PSScriptRoot 'src\com\lqb9\qqwatchmod'
 New-Item -ItemType Directory -Force -Path "$OutputDirectory\classes","$OutputDirectory\dex" | Out-Null
 function Checked($file, $arguments) { & $file @arguments; if ($LASTEXITCODE -ne 0) { throw "Failed: $file" } }
-$sources = @('CoreSnapshot.java','CoreTracker.java','RuntimeLine.java','CoreCollector.java','QqCpuTracker.java','ThreadCpuTracker.java','CpuLoadMonitor.java','TaskRegistry.java','TaskBridge.java','ProcessingHistory.java') | ForEach-Object { Join-Path $sourceDir $_ }
+$apiJar = Join-Path $PSScriptRoot 'libs\102.0.0-api-102.0.0\classes.jar'
+$sources = @(Get-ChildItem $sourceDir -Filter *.java | Where-Object { $_.Name -notin @('WatchModule.java','WatchSettings.java','MainActivity.java','RootControl.java') } | ForEach-Object { $_.FullName })
 $sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\BridgeCheck.java'
+$sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\BridgeTargetService.java'
 $sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\BridgeWatchStub.java'
-Checked "$javaBin\javac.exe" (@('--release','8','-Xlint:-options','-encoding','UTF-8','-classpath',$aj,'-d',"$OutputDirectory\classes") + $sources)
+$sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\RuntimeCheck.java'
+$sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\RuleExportCheck.java'
+$sources += @(Get-ChildItem (Join-Path $PSScriptRoot 'test-fixtures') -Recurse -Filter *.java | ForEach-Object { $_.FullName })
+Checked "$javaBin\javac.exe" (@('--release','8','-Xlint:-options','-encoding','UTF-8','-classpath',"$aj;$apiJar",'-d',"$OutputDirectory\classes") + $sources)
 Checked "$javaBin\jar.exe" @('cf',"$OutputDirectory\classes.jar",'-C',"$OutputDirectory\classes",'.')
-Checked "$bt\d8.bat" @('--release','--min-api','26','--lib',$aj,'--output',"$OutputDirectory\dex","$OutputDirectory\classes.jar")
-$manifest = '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.lqb9.qqwatchbridge.check"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="32"/><application android:label="QQ Core Check"/><instrumentation android:name="com.lqb9.qqwatchmod.BridgeCheck" android:targetPackage="com.lqb9.qqwatchbridge.check"/></manifest>'
+Checked "$bt\d8.bat" @('--release','--min-api','26','--lib',$aj,'--output',"$OutputDirectory\dex","$OutputDirectory\classes.jar",$apiJar)
+$manifest = '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.lqb9.qqwatchbridge.check"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="32"/><application android:label="QQ Core Check"><service android:name="com.lqb9.qqwatchmod.BridgeTargetService" android:process=":worker" android:exported="false"/></application><instrumentation android:name="com.lqb9.qqwatchmod.BridgeCheck" android:targetPackage="com.lqb9.qqwatchbridge.check"/></manifest>'
 [IO.File]::WriteAllText("$OutputDirectory\AndroidManifest.xml", $manifest, [Text.Encoding]::UTF8)
 Checked "$bt\aapt2.exe" @('link','--manifest',"$OutputDirectory\AndroidManifest.xml",'-I',$aj,'-o',"$OutputDirectory\base.apk")
 Add-Type -AssemblyName System.IO.Compression.FileSystem

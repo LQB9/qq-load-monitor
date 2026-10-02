@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QQ负载监控 v1.18 · 失败诊断</title><style>
+body{max-width:900px;margin:auto;padding:24px 18px 48px;background:#f5f6fa;color:#222736;font:15px/1.8 "Microsoft YaHei",system-ui,sans-serif}
+h1{color:#dc2d70;font-size:28px}h2{font-size:20px;margin:0 0 12px}.card{background:#fff;border:1px solid #e8eaf1;border-radius:16px;padding:22px;margin:18px 0}
+table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid #e5e7ee;padding:10px;text-align:left;vertical-align:top}th{background:#fff0f6}code{overflow-wrap:anywhere;font-family:Consolas,monospace}a{color:#cb2b68}.muted{color:#727988}li{margin:8px 0}@media(max-width:540px){th,td{padding:7px}.card{padding:16px}}
+</style></head><body><h1>QQ负载监控 v1.18</h1><p>补充失败诊断，继续使用原来的日志导出按钮。2026-10-01 · versionCode 19</p>
+<div class="card"><h2>这版解决什么</h2><p>v1.17 的测试截图没有确认成功停止的任务。原日志记录了超限，却没有目标任务类型和调用栈，无法判断任务捕获遗漏、任务切换和取消接口不支持的具体位置。</p>
+<p>v1.18 在原监控日志里新增 <code>[DIAG]</code> 技术记录。这里只补定位能力，尚未完成故障机异常线程的业务停止适配。</p></div>
+<div class="card"><h2>故障机下一步</h2><ol>
+<li>安装同目录的 <strong>QQ负载监控.apk</strong>，在模块管理器确认启用、作用域包含 QQ。</li>
+<li>强行停止 QQ 后重新打开；打开桌面模块，启动精确核心采集。</li>
+<li>在 QQ 面板按测试需要设置核心和阈值。只有有效样本严格超限、尝试处理失败时，才会自动添加目标诊断。</li>
+<li>再次出现「无法处理」「任务已变化」「未处理」或「仍在运行」后，在 <strong>明细 → 导出日志到下载目录</strong> 保存并提供新的 TXT。</li>
+</ol><p>文件仍在 <code>Download/QQWatchdog/</code>。无需另一套日志工具，也无需额外操作来采集已映射 Java 线程的调用栈。</p></div>
+<div class="card"><h2>新增记录</h2><table><tr><th>信息</th><th>用途</th></tr>
+<tr><td>QQ 合计、目标线程自身负载、逐核贡献、所选核心、阈值及前后台</td><td>区分整体超限与单线程占用，避免将表中合计值当成线程自身负载。</td></tr>
+<tr><td>PID/TID、任务类、捕获入口、generation、任务开始与采样窗口的时间差</td><td>判断实际任务是否被捕获、是否覆盖窗口，以及任务变化的原因。</td></tr>
+<tr><td>Java 线程状态及最多24层 Java 调用栈</td><td>只使用实际线程与 TID 映射；不根据相同线程名猜测目标。栈反映诊断时刻，不能单凭它证明采样窗口内的负载归属。</td></tr>
+<tr><td>QQ 版本、系统版本、hook 是否成功及失败原因</td><td>判断设备/版本差异或控制通道异常。</td></tr></table>
+<p class="muted">同一目标身份每分钟最多采集一次栈，每个进程两次栈采集至少间隔3秒；未采集时写明限频。无映射、空栈或读取失败会明确标记。</p></div>
+<div class="card"><h2>如何读失败原因</h2><table><tr><th>代码</th><th>含义</th></tr>
+<tr><td><code>NO_ACTIVE_TASK</code></td><td>未捕获活动任务。可能是已返回、捕获未覆盖或原生执行；不能直接判定线程类型。</td></tr>
+<tr><td><code>TASK_WINDOW_MISMATCH</code></td><td>当前任务晚于窗口开始，保留负载归属保护，不取消这个未确认目标。</td></tr>
+<tr><td><code>CANCEL_NOT_ACCEPTED</code></td><td>任务没有受支持的取消接口、使用自定义回调、已变化或拒绝取消；详情会给出原因。</td></tr>
+<tr><td><code>CANCEL_NO_RETURN</code></td><td>已发起取消，但任务在确认期内仍未返回。</td></tr>
+<tr><td><code>CONTROL_REJECTED / CONTROL_UNAVAILABLE / CONTROL_TIMEOUT</code></td><td>设置、身份、采样时效、队列或目标控制通道问题；未记作处理成功。</td></tr></table></div>
+<div class="card"><h2>支持范围</h2><p>监控仍仅限 QQ，CPU 0–7 可选，默认合计阈值200%，前后台共用阈值。取消策略沿用 v1.17；标准 FutureTask 协作取消后，观察到任务返回才确认成功。</p>
+<p>处理状态表仍保留最近100条，仅在当前 QQ 会话内，不导出清单。失败的技术诊断随已有监控日志导出；不记录聊天正文和任务对象内容。原生用户调用栈尚未采集，普通 Runnable、自定义取消回调和原生任务仍需专用停止接口。</p></div>
+<div class="card"><h2>验证与文件</h2><p>119项 JVM 回归检查通过；独立 Android UID 中5个生产控制通道案例与实际 Downloads 导出检查通过：任务真正返回、忽略取消继续执行、无 Java 映射、有映射但任务未捕获、任务窗口不匹配。</p>
+<p>已安装到当前 ADB 设备 Xiaomi 25102RKBEC，回读 v1.18 / vc19、原签名及实际安装包 SHA256 一致；QQ 成功载入新增 hook，精确采集恢复，设置保留。</p>
+<p>故障日志来自 Xiaomi 2407FRK8EC。当前连接手机与故障机不同，以上测试没有证明故障机线程已经停止；真实业务适配仍待新版故障日志。</p>
+<p>APK：<strong>QQ负载监控.apk</strong>，132,102字节<br>SHA256：<code>AABA77390F29F3F6EFAF3D660A448D5E63AF70D360025E81DE95030B36E4447E</code></p></div></body></html>

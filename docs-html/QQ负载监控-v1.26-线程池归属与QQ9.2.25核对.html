@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QQ负载监控 v1.26 · 线程池归属与QQ9.2.25核对</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f5fa;color:#252b3d;font:15px/1.8 "Microsoft YaHei",system-ui,sans-serif}
+main{max-width:1050px;margin:auto;padding:26px 22px 60px}header{background:linear-gradient(110deg,#ff3788,#fa85b6);color:white;border-radius:20px;padding:30px}
+h1{font-size:28px;line-height:1.4;margin:6px 0 14px}h2{font-size:21px;margin:0 0 12px}p{margin:10px 0}.card{background:white;border:1px solid #e4e7f0;border-radius:18px;padding:24px;margin-top:20px}
+.badges{display:flex;gap:10px;flex-wrap:wrap}.badge{background:#ffffff26;border-radius:8px;padding:4px 12px}.scroll{overflow:auto}
+table{width:100%;border-collapse:collapse;min-width:610px}td,th{padding:12px;border:1px solid #e4e7f0;text-align:left;vertical-align:top}th{background:#fff0f6}tr:nth-child(even){background:#fafbfe}
+pre{white-space:pre-wrap;background:#f4f6fc;padding:16px;border-radius:12px}pre,code{font-family:Consolas,monospace;overflow-wrap:anywhere;font-size:13px}
+.callout{background:#f0f4ff;border-left:4px solid #4d6fe8;border-radius:0 10px 10px 0;padding:14px 18px}.muted{color:#72798b}.ok{color:#188766}a{color:#d3256a}li{margin:8px 0}
+@media(max-width:700px){main{padding:16px 12px 40px}header,.card{padding:20px}h1{font-size:24px}}
+</style></head><body><main>
+<header><div>2026-10-02 · 本地开发版 / versionCode 27</div><h1>QQ负载监控 v1.26<br>线程池归属与 QQ 9.2.25 核对</h1>
+<p>推进异常任务的专用停止适配：先把实际线程池、工作线程和正在执行的任务对应起来，再核对故障版本的 GIF 停止接口。</p>
+<div class="badges"><span class="badge">344 项 JVM 检查</span><span class="badge">28 个 Android 案例</span><span class="badge">已安装当前手机</span></div></header>
+<section class="card"><h2>本次完成的内容</h2><div class="scroll"><table><thead><tr><th>内容</th><th>现在的行为</th></tr></thead><tbody>
+<tr><td>实际线程池归属</td><td>从实际 ThreadPoolExecutor 实例和 beforeExecute 执行入口建立池 → 工作线程 → 任务的对应关系。使用对象身份和准确的 JavaThread/TID，不用线程名称猜测。</td></tr>
+<tr><td>任务切换与历史</td><td>afterExecute 标记本次任务结束。执行记录在任务开始时保存归属，线程随后换任务或换池不会改写旧记录；当前活动与最近完成明确分开。重复使用的 TID 不套用旧 Java 线程。</td></tr>
+<tr><td>提交与执行分开</td><td>execute/schedule 成功返回后记录提交来源；只有 beforeExecute 的准确绑定标为 execution-confirmed。提交观察、未知或多个池的混合证据不会冒充准确执行归属。</td></tr>
+<tr><td>原日志及处理表</td><td>SAMPLE 增加线程池观察数、工作线程归属数；EXEC 增加 executor 编号、真实池类型、活动/最近完成及对应任务。处理记录的展开执行证据沿用同一份信息；导出仍使用明细页原按钮。</td></tr>
+<tr><td>QQ 9.2.25 原包核对</td><td>用户提供的 QQ.apk.1 已确认是 QQ 9.2.25 / 11820。静态调用路径及 Android 上真实 APK 的类加载反射核对通过，现有 GIF 对象专项规则与该版接口匹配。</td></tr>
+</tbody></table></div><p class="muted">executor 编号仅用于当前 QQ 进程内区分对象，QQ 重启后会重新编号。弱引用和数量上限控制保存规模：128 个池、512 个提交对象、1024 个工作线程记录。仅覆盖已观察到的 ThreadPoolExecutor 及其子类入口；没有映射仍明确显示未知。</p></section>
+<section class="card"><h2>这次核对到的 GIF 停止方式</h2><p>QQ 9.2.25 的 RenderTask 会调用原生 renderFrame，并再次通过 ScheduledThreadPoolExecutor.schedule 提交自己。因此，取消某一个已经结束的短 Future 不能代表同一 GIF 后续渲染已经停止。</p>
+<p>现有专项规则通过 SafeRunnable 中唯一的 GifDrawable 字段定位所有者，核对公开 start / stop / isRunning / recycle 接口。满足原归属条件后先设置对象级暂停保护，再调用 stop；QQ 的 stop 会取消当前调度 Future、移除相关消息，并保存渲染余量。专项只针对对应 GIF 对象，保留池和其他任务。</p>
+<div class="callout"><b>仍待验证：</b>stop 的原生余量保存与渲染共享同一 GifInfoHandle 锁。如果原生渲染没有返回，stop 也可能等待该锁。本轮接口核对证明结构兼容，不能证明故障机的卡死渲染已可中断。原生代码没有已验证的可中断路径时，不报告已成功停止。</div>
+<p>日志里的 sub_dedicated_t、MSFNewServiceSe 先前没有准确 Java 任务映射，现阶段仍不能只凭名称指定停止接口。新版归属信息用于继续确认真实任务类型；如果它们不走受观察的线程池入口，仍需对应业务或原生证据。</p></section>
+<section class="card"><h2>负载与处理规则</h2><p>本次未改变已约定的触发逻辑：只累计 QQ 在用户勾选核心上的实际 CPU 时间，单核满载为 100%；严格超过合计阈值，并持续达到设定时长后尝试处理。前后台沿用同一阈值和时长，数据无效或前后台未知时暂停处理。</p>
+<p>任务处理仍先进行身份、配置、窗口、时效及保护线程复核，再按 GIF 专项 → 标准 Future 协作取消的顺序处理，等待实际结束确认。线程池观察本身不触发停止；没有新增独立单线程阈值，也没有整池关闭、线程强杀或进程重启策略。</p>
+<p>安装前后配置文本一致，保留当前手机设置：</p><pre>cpu=285
+duration=3
+interval=2
+cores=255
+action=stop_task</pre>
+<p class="muted">cores=255 表示选择 CPU0—7；当前是 285% / 持续3秒 / 间隔2秒。默认阈值和持续时长仍可在模块设置，不由本次升级重置。</p></section>
+<section class="card"><h2>验证结果</h2><div class="scroll"><table><thead><tr><th>验证</th><th>结果</th><th>范围</th></tr></thead><tbody>
+<tr><td>JVM 回归</td><td class="ok">344 项通过</td><td>原319项；新增25项线程池对象身份、提交/执行区分、任务切换、TID复用、历史归属、嵌套及数量边界。</td></tr>
+<tr><td>Android 检查</td><td class="ok">28 个案例通过</td><td>原26项；新增实际Java线程池的生产观察Hook生命周期，以及真实QQ9.2.25 APK反射。生产控制协议和Downloads实际导出通过。Hook后端及GIF执行使用隔离夹具，不在QQ内制造故障。</td></tr>
+<tr><td>真实 QQ 运行记录</td><td class="ok">已确认准确池/任务归属</td><td>本机仍是QQ9.2.85，没有降级。观察到55个实际池，已记录ThreadNormalPool与ScheduledThreadPoolExecutor的execution-confirmed任务证据。主采样/日志各一份，精确采集恢复。</td></tr>
+<tr><td>行为边界</td><td class="ok">33 个关键源文件逐字节不变</td><td>采集、核心合计判定、持续时长、业务停止规则、控制协议、UI、日志导出与配置实现保持。所有框架Hook仍由HookGateway管理。</td></tr>
+<tr><td>装机及完整性</td><td class="ok">v1.26 / vc27</td><td>2026-10-02T20:25:18；原签名覆盖安装，设备实际APK与本地哈希一致；用户配置保持。生产APK未打包测试类或QQ原包。</td></tr>
+<tr><td>故障机真实效果</td><td>待验证</td><td>未在QQ9.2.25真实故障机运行新版，未证明问题GIF实际停止、负载下降，也未完成未知业务/原生任务的停止适配。</td></tr>
+</tbody></table></div></section>
+<section class="card"><h2>接下来需要你做的事</h2><p>现在不需要再提供安装包或另补资料。等故障机方便测试时：</p><ol>
+<li>安装此版负载监控模块，确认模块作用域包含QQ，并重启QQ；沿用现有精确采集器启动方式。</li>
+<li>按实际使用方式等待问题出现，保留你需要的核心、阈值和持续时长设置。</li>
+<li>问题出现后从模块明细页使用原来的按钮导出日志，位置仍为 <code>Download/QQWatchdog/</code>，将这份日志发回即可。无需另外安装日志模块。</li>
+</ol><p>后续依据实际池、任务类、执行窗口与停止回执，决定适配哪个业务接口；成功状态必须有实际停止确认，不能只凭取消请求返回或负载偶然下降。</p></section>
+<section class="card"><h2>文件与校验</h2><p><a href="QQ负载监控.apk">QQ负载监控.apk</a> · <a href="QQ负载监控-v1.26.apk">版本APK</a> · <a href="SHA256SUMS.txt">SHA-256校验清单</a></p>
+<p>APK大小 <b>168,966 B</b>，签名沿用原模块。APK SHA-256：</p><pre>EA312DB57BD26259674C477F2105BBE4B3624736FD44CF3AE2F2D3BD287C5EB7</pre>
+<p class="muted">此次为本地开发与装机验证。用户原QQ安装包仅作只读接口核对，不打包进入模块；未上传QQ原包、真实设备日志或签名私钥。</p></section>
+</main></body></html>

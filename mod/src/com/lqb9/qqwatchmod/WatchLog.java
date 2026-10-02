@@ -36,8 +36,11 @@ final class WatchLog {
     }
 
     static void record(final String category, final String message) {
+        recordAt(System.currentTimeMillis(), category, message);
+    }
+
+    static void recordAt(final long time, final String category, final String message) {
         if (store == null) return;
-        final long time = System.currentTimeMillis();
         try {
             io.execute(new Runnable() {
                 public void run() {

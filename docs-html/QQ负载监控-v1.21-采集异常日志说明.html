@@ -1,0 +1,32 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QQ负载监控 v1.21 · 采集异常日志</title><style>
+body{max-width:850px;margin:auto;padding:24px 16px;background:#f5f6fa;color:#273041;font:15px/1.8 "Microsoft YaHei",system-ui,sans-serif}
+h1{font-size:27px;color:#d63173}h2{font-size:19px;margin:0 0 10px}.card{background:white;border:1px solid #e4e7ee;border-radius:16px;padding:20px;margin:18px 0}
+li{margin:7px 0}code{overflow-wrap:anywhere;font-family:Consolas,monospace}a{color:#cb2a69}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;padding:9px;border:1px solid #e5e7ef}th{background:#fff0f6}
+</style></head><body><h1>QQ负载监控 v1.21</h1><p>采集异常、原因变化与恢复日志 · versionCode 22</p>
+<div class="card"><h2>这次补了什么</h2><ul>
+<li>采集器在检测到异常、原因变化或恢复的当轮保留事件，QQ下次读取即写入原有日志，不受5秒快照节流限制。</li>
+<li>记录原始发生时间、暂停时长、QQ进程CPU时间、调度事件运行时间、校验上限与两者差值。</li>
+<li>记录丢事件增量、累计数量，以及每个核心的overrun、commit overrun、dropped events。</li>
+<li>补充采集窗口长度、进程扫描耗时、最近收到有效事件的时间、进程/线程数、缓冲区大小和计数回退身份。</li>
+<li>持续同类异常每5秒补充一次数据；异常恢复后，短暂异常的证据仍可补记。</li>
+</ul><p>原来的导出按钮与下载目录继续使用。核心选择、阈值、前后台规则与任务处理策略沿用；处理状态表仍不导出。</p></div>
+<div class="card"><h2>如何阅读日志</h2><table><tr><th>记录或原因</th><th>含义</th></tr>
+<tr><td><code>CORE_PAUSE</code></td><td>已正常运行的采集转为无效或预热。</td></tr>
+<tr><td><code>CORE_REASON_CHANGE</code></td><td>暂停期间原因发生变化，立即补记。</td></tr>
+<tr><td><code>CORE_DETAIL</code></td><td>持续异常的定期详细数据。</td></tr>
+<tr><td><code>CORE_RECOVER</code></td><td>采集恢复有效；它不表示异常任务已处理。</td></tr>
+<tr><td><code>TRACE_LOSS</code></td><td>内核丢事件统计增加，查看lossDelta和lossPerCore。</td></tr>
+<tr><td><code>CPU_TIME_MISMATCH</code></td><td>进程CPU时间超过调度记录时间×1.25＋80毫秒。可能缺事件或有采集时序偏差，不等同于已确认缓冲区溢出。</td></tr>
+<tr><td><code>PROCESS_COUNTER_ROLLBACK</code></td><td>同一进程启动身份的CPU计数回退。</td></tr>
+<tr><td><code>PROCESS_SET_CHANGED / WARMUP</code></td><td>进程集合变化或采集预热；不能据此判定泄露。</td></tr>
+<tr><td><code>CORE_STATE / CORE_GAP</code></td><td>QQ读取端的有效性变化；或事件缓存已轮换、部分证据缺失。</td></tr>
+</table><p><code>procCpuNs</code>、<code>traceRuntimeNs</code>、<code>allowedNs</code>与<code>cpuMinusTraceNs</code>的单位均为纳秒。<code>compared=0</code>表示本轮尚不能比较。</p></div>
+<div class="card"><h2>更新与故障机测试</h2><ol>
+<li>安装<a href="QQ负载监控-v1.21.apk">QQ负载监控-v1.21.apk</a>，强行停止QQ再打开。</li>
+<li>从桌面打开模块，先点“停止精确核心采集”，再点“启动精确核心采集”，按提示授权root。旧采集器不会自动获得新日志功能。</li>
+<li>再次出现“调度事件不完整，暂停处理”后，从QQ面板的明细页导出原有日志，文件仍在“下载 / QQWatchdog”。</li>
+</ol><p>当前连接手机已完成上述更新与采集恢复，原配置保留。故障机不在本机，未验证其19:48异常的实际根因。</p></div>
+<div class="card"><h2>验证与保留范围</h2><p>183项JVM检查通过；手机14项原有下载/日志检查通过，包含短暂异常补记、去重及原始时间验证。隔离的实际逐核采集取得7个有效样本，并带出CPU时间与丢事件证据。测试数据仅用于验证日志链路，不代表故障机发生了内核丢事件。</p>
+<p>采集器保留最近最多64个事件且正文最多32KiB，超限轮换会记录CORE_GAP。QQ被冻结时写入会延迟，恢复读取后可补记仍保留的事件；更早的已轮换事件无法还原。原日志仍是4份×512KiB、合计最多2MiB，QQ重启后保留。相同事件在同一读取会话内去重；跨QQ重启的重放可按collector和event编号识别。</p>
+<p>安装时间：2026-10-01T22:56:32<br>APK：152,582字节<br>SHA256：<code>D56DE41BFC78831BF40817A43FFBCF2943AF88EDE73733E6EBDCF524F9E6C102</code></p></div></body></html>

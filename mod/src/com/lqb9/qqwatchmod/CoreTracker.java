@@ -11,7 +11,9 @@ final class CoreTracker {
     static final class Detail {
         final CoreSnapshot.Counter thread;
         final double cpu;
-        Detail(CoreSnapshot.Counter thread, double cpu) { this.thread = thread; this.cpu = cpu; }
+        final double allCpu;
+        Detail(CoreSnapshot.Counter thread, double cpu) { this(thread,cpu,cpu); }
+        Detail(CoreSnapshot.Counter thread, double cpu, double allCpu) { this.thread = thread; this.cpu = cpu; this.allCpu=allCpu; }
     }
     static final class Result {
         final double cpu;
@@ -53,14 +55,15 @@ final class CoreTracker {
         for (CoreSnapshot.Counter thread : old.threads) baseline.put(thread.key(), thread);
         List<Detail> hot = new ArrayList<Detail>();
         for (CoreSnapshot.Counter thread : now.threads) {
-            CoreSnapshot.Counter before = baseline.get(thread.key()); long delta = 0;
+            CoreSnapshot.Counter before = baseline.get(thread.key()); long delta = 0, allDelta=0;
             for (int core = 0; core < 8; core++) {
                 long value = thread.cores[core] - (before == null ? 0 : before.cores[core]);
                 if (value < 0 || value > dt * 1.1) return invalid(now, "线程计数回退或不完整");
+                allDelta += value;
                 if ((mask & (1 << core)) != 0) delta += value;
             }
-            if (delta > dt * 1.1) return invalid(now, "线程计数不完整");
-            if (delta > 0) hot.add(new Detail(thread, delta * 100d / dt));
+            if (allDelta > dt * 1.1) return invalid(now, "线程计数不完整");
+            if (delta > 0) hot.add(new Detail(thread, delta * 100d / dt, allDelta * 100d / dt));
         }
         Collections.sort(hot, (a, b) -> Double.compare(b.cpu, a.cpu));
         return new Result(sum, cores, now, old.monoNs, hot, "调度实际 CPU 时间 · 仅 QQ");

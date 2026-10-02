@@ -9,7 +9,7 @@ $env:JAVA_HOME = Split-Path $javaBin
 $sourceDir = Join-Path $PSScriptRoot 'src\com\lqb9\qqwatchmod'
 New-Item -ItemType Directory -Force -Path "$OutputDirectory\classes","$OutputDirectory\dex" | Out-Null
 function Checked($file, $arguments) { & $file @arguments; if ($LASTEXITCODE -ne 0) { throw "Failed: $file" } }
-$sources = @('CoreSnapshot.java','CoreTracker.java','RuntimeLine.java','CoreCollector.java','QqCpuTracker.java','ThreadCpuTracker.java') | ForEach-Object { Join-Path $sourceDir $_ }
+$sources = @('CoreSamplingDiagnostics.java','CoreTimeWindow.java','CoreSnapshot.java','CoreTracker.java','RuntimeLine.java','CoreCollector.java','QqCpuTracker.java','ThreadCpuTracker.java') | ForEach-Object { Join-Path $sourceDir $_ }
 $sources += Join-Path $PSScriptRoot 'android-tests\com\lqb9\qqwatchmod\CoreCheck.java'
 Checked "$javaBin\javac.exe" (@('--release','8','-Xlint:-options','-encoding','UTF-8','-classpath',$aj,'-d',"$OutputDirectory\classes") + $sources)
 Checked "$javaBin\jar.exe" @('cf',"$OutputDirectory\classes.jar",'-C',"$OutputDirectory\classes",'.')
