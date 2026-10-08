@@ -12,11 +12,14 @@ public final class CoreCheck extends Instrumentation {
     private File directory;
     private final AtomicBoolean burn = new AtomicBoolean(), stop = new AtomicBoolean();
     private static volatile double sink;
-    @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
+    private boolean benchmark;
+    @Override public void onCreate(Bundle args) { super.onCreate(args); benchmark=args!=null && "bench".equals(args.getString("mode")); start(); }
     @Override public void onStart() {
+        if(benchmark){CollectorBench.run(this);return;}
         Bundle result = new Bundle(); List<Thread> workers = new ArrayList<Thread>();
         try {
             directory = new File(getTargetContext().getFilesDir(), "corecheck");directory.mkdirs();
+            StatReaderCheck.run(directory);
             new File(directory,"go").delete();
             int[] tids = new int[3]; CountDownLatch ready = new CountDownLatch(3);
             for (int i=0;i<3;i++) {
@@ -60,7 +63,7 @@ public final class CoreCheck extends Instrumentation {
             }
             if(valid<3 || minimumRemoved<20)throw new AssertionError("not enough pinned samples: "+valid+",removed="+minimumRemoved);
             result.putString("stream","PASS controlled per-core samples="+valid+"; unselected CPU2 minimum removed="+minimumRemoved
-                    +"%; total maximum="+maximumAll+"%; collector timing/loss evidence present; other UIDs excluded; QQ untouched\n");finish(-1,result);
+                    +"%; total maximum="+maximumAll+"%; collector timing/loss evidence present; native reader/cache lifecycle passed; other UIDs excluded; QQ untouched\n");finish(-1,result);
         }catch(Throwable e){result.putString("stream","FAILED "+e);finish(1,result);}
         finally{stop.set(true);for(Thread worker:workers)try{worker.join(2000);}catch(Exception ignored){}}
     }

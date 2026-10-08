@@ -30,16 +30,8 @@ final class ThreadCpuTracker {
         }
 
         static Reading parse(int pid, int tid, String processName, String stat) {
-            int left = stat.indexOf('(');
-            int right = stat.lastIndexOf(')');
-            if (left < 0 || right <= left) throw new IllegalArgumentException("Invalid thread comm");
-            String[] fields = stat.substring(right + 1).trim().split("\\s+");
-            if (fields.length < 37) throw new IllegalArgumentException("Short thread stat");
-            long ticks = Long.parseLong(fields[11]) + Long.parseLong(fields[12]);
-            long start = Long.parseLong(fields[19]);
-            int core = Integer.parseInt(fields[36]);
-            if (ticks < 0 || start < 0 || core < 0) throw new IllegalArgumentException("Invalid thread stats");
-            return new Reading(pid, tid, processName, stat.substring(left + 1, right), start, ticks, core);
+            ProcStat parsed = ProcStat.parse(stat, true);
+            return new Reading(pid, tid, processName, parsed.name, parsed.startTicks, parsed.cpuTicks, parsed.core);
         }
     }
 

@@ -1,6 +1,7 @@
 # Background on-device check using the production logger/exporter. ASCII for PS 5.1.
 param([Parameter(Mandatory=$true)][string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
+if (-not $env:QQWATCH_SIGN_PASSWORD) { throw 'Set QQWATCH_SIGN_PASSWORD locally before signing' }
 $sdk = 'D:\deepseek\_work\android-sdk'
 $bt = "$sdk\build-tools\37.0.0"
 $aj = "$sdk\platforms\android-37.0\android.jar"
@@ -25,5 +26,5 @@ Add-Type -AssemblyName System.IO.Compression
 $zip = [IO.Compression.ZipFile]::Open("$OutputDirectory\base.apk",[IO.Compression.ZipArchiveMode]::Update)
 try { [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,"$OutputDirectory\dex\classes.dex",'classes.dex') | Out-Null } finally { $zip.Dispose() }
 Checked "$bt\zipalign.exe" @('-f','-p','4',"$OutputDirectory\base.apk","$OutputDirectory\aligned.apk")
-Checked "$bt\apksigner.bat" @('sign','--ks',"$PSScriptRoot\watchmod-key.jks",'--ks-pass','pass:qqwatchmod123','--ks-key-alias','qqwatchmod','--out',"$OutputDirectory\log-download-check.apk","$OutputDirectory\aligned.apk")
+Checked "$bt\apksigner.bat" @('sign','--ks',"$PSScriptRoot\watchmod-key.jks",'--ks-pass','env:QQWATCH_SIGN_PASSWORD','--ks-key-alias','qqwatchmod','--out',"$OutputDirectory\log-download-check.apk","$OutputDirectory\aligned.apk")
 Write-Host 'LOG TEST APK READY'

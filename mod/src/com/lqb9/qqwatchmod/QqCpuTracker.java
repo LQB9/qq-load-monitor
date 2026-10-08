@@ -23,14 +23,8 @@ final class QqCpuTracker {
         }
 
         static Reading parse(int pid, String name, String stat) {
-            int end = stat.lastIndexOf(')');
-            if (end < 0) throw new IllegalArgumentException("Missing stat comm");
-            String[] fields = stat.substring(end + 1).trim().split("\\s+");
-            if (fields.length < 20) throw new IllegalArgumentException("Short proc stat");
-            long ticks = Long.parseLong(fields[11]) + Long.parseLong(fields[12]);
-            long start = Long.parseLong(fields[19]);
-            if (ticks < 0 || start < 0) throw new IllegalArgumentException("Negative proc stat");
-            return new Reading(pid, name, start, ticks);
+            ProcStat parsed = ProcStat.parse(stat, false);
+            return new Reading(pid, name, parsed.startTicks, parsed.cpuTicks);
         }
     }
 

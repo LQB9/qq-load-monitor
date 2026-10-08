@@ -18,6 +18,7 @@ public final class CoreCollector {
     private final Object lock = new Object();
     private final Map<Integer, Tracked> tracked = new HashMap<Integer, Tracked>();
     private final Map<Integer, Long> rejected = new HashMap<Integer, Long>();
+    private final ProcStatReader statFiles = new ProcStatReader();
     private final long[] totals = new long[8];
     private long allRuntime, generation, sequence, lastLoss, warmUntil;
     private long eventCount;
@@ -91,6 +92,7 @@ public final class CoreCollector {
             System.out.println("CORE_READY pid=" + android.os.Process.myPid());
             while (!new File(directory, STOP).exists() && readerError.isEmpty()) {
                 long began = SystemClock.elapsedRealtime();
+                statFiles.beginScan();
                 Map<String, Long> discovered = discover();
                 long scanMs = SystemClock.elapsedRealtime() - began;
                 // Thread discovery can take hundreds of ms; it must not split the CPU/trace comparison boundaries.
@@ -98,6 +100,7 @@ public final class CoreCollector {
                 Map<String, Long> cpuBefore = readCpu(discovered);
                 Captured captured = capture();
                 Map<String, Long> cpu = readCpu(discovered);
+                statFiles.finishScan();
                 long bracketNs = System.nanoTime() - bracketBeganNs;
                 CoreTimeWindow.Frame frame = new CoreTimeWindow.Frame(cpuBefore, cpu, captured.runtime);
                 CoreTimeWindow.Result comparison = CoreTimeWindow.compare(previousFrame, frame, hz);
@@ -160,7 +163,7 @@ public final class CoreCollector {
             int pid = Integer.parseInt(identity.substring(0,identity.indexOf(':'))); File proc = new File("/proc/" + pid);
             try {
                 if (Os.stat(proc.getPath()).st_uid != uid) continue;
-                QqCpuTracker.Reading p = QqCpuTracker.Reading.parse(pid,"QQ",read(new File(proc,"stat")));
+                QqCpuTracker.Reading p = QqCpuTracker.Reading.parse(pid,"QQ",statFiles.read(new File(proc,"stat")));
                 readings.put(pid + ":" + p.startTicks,p.cpuTicks);
             } catch (android.system.ErrnoException gone) { if (proc.exists()) throw gone; }
               catch (IOException gone) { if (proc.exists()) throw gone; }
@@ -182,18 +185,18 @@ public final class CoreCollector {
         String[] processes = new File("/proc").list(); if (processes == null) throw new IOException("无法读取进程列表");
         long now = SystemClock.elapsedRealtime();
         for (String entry : processes) {
-            int pid; try { pid = Integer.parseInt(entry); } catch (NumberFormatException ignored) { continue; }
+            int pid = processId(entry); if (pid <= 0) continue;
             if (onlyPid != 0 && pid != onlyPid) continue;
             File proc = new File("/proc/" + pid);
             try {
                 if (Os.stat(proc.getPath()).st_uid != uid) continue;
-                QqCpuTracker.Reading p = QqCpuTracker.Reading.parse(pid, "QQ", read(new File(proc, "stat")));
+                QqCpuTracker.Reading p = QqCpuTracker.Reading.parse(pid, "QQ", statFiles.read(new File(proc, "stat")));
                 cpu.put(pid + ":" + p.startTicks, p.cpuTicks);
                 String[] tasks = new File(proc, "task").list(); if (tasks == null) throw new IOException("线程列表不可读");
                 for (String task : tasks) {
                     int tid = Integer.parseInt(task);
                     try {
-                        ThreadCpuTracker.Reading t = ThreadCpuTracker.Reading.parse(pid, tid, "QQ", read(new File(proc, "task/" + task + "/stat")));
+                        ThreadCpuTracker.Reading t = ThreadCpuTracker.Reading.parse(pid, tid, "QQ", statFiles.read(new File(proc, "task/" + task + "/stat")));
                         synchronized (lock) {
                             Tracked old = tracked.get(tid);
                             if (old == null || old.start != t.startTicks || old.pidStart != p.startTicks)
@@ -227,31 +230,33 @@ public final class CoreCollector {
     private void readEvents() {
         try {
             pipe = new FileInputStream(new File(instance, "trace_pipe"));
-            BufferedReader reader = new BufferedReader(new InputStreamReader(pipe, StandardCharsets.UTF_8), 65536);
-            String line;
-            while (!stopping && (line = reader.readLine()) != null) {
-                RuntimeLine event = RuntimeLine.parse(line); if (event == null) continue;
+            RuntimeStream.read(pipe, new RuntimeStream.Consumer() {
+                private long now;
+                public void batch() { now = SystemClock.elapsedRealtime(); }
+                public void accept(int tid, int core, long runtime) { acceptRuntime(tid, core, runtime, now); }
+            });
+        } catch (Exception failure) { if (!stopping) readerError = failure.toString(); }
+    }
+    private void acceptRuntime(int tid, int core, long runtime, long now) {
                 synchronized (lock) {
-                    Tracked thread = tracked.get(event.tid);
-                    long now = SystemClock.elapsedRealtime();
+                    if (stopping) return;
+                    Tracked thread = tracked.get(tid);
                     if (thread == null) {
-                        Long denied = rejected.get(event.tid); if (denied != null && now - denied < 2000) continue;
+                        Long denied = rejected.get(tid); if (denied != null && now - denied < 2000) return;
                         try {
-                            File proc = new File("/proc/" + event.tid);
-                            if (Os.stat(proc.getPath()).st_uid != uid) { rejected.put(event.tid, now); continue; }
+                            File proc = new File("/proc/" + tid);
+                            if (Os.stat(proc.getPath()).st_uid != uid) { rejected.put(tid, now); return; }
                             String status = read(new File(proc, "status")); int at = status.indexOf("Tgid:");
                             int pid = Integer.parseInt(status.substring(at + 5, status.indexOf('\n', at)).trim());
-                            if (onlyPid != 0 && pid != onlyPid) continue;
+                            if (onlyPid != 0 && pid != onlyPid) return;
                             QqCpuTracker.Reading p = QqCpuTracker.Reading.parse(pid, "QQ", read(new File("/proc/" + pid + "/stat")));
-                            ThreadCpuTracker.Reading t = ThreadCpuTracker.Reading.parse(pid, event.tid, "QQ", read(new File(proc, "stat")));
-                            thread = new Tracked(pid, p.startTicks, event.tid, t.startTicks, t.name, now); tracked.put(event.tid, thread);
-                        } catch (Exception gone) { continue; }
+                            ThreadCpuTracker.Reading t = ThreadCpuTracker.Reading.parse(pid, tid, "QQ", read(new File(proc, "stat")));
+                            thread = new Tracked(pid, p.startTicks, tid, t.startTicks, t.name, now); tracked.put(tid, thread);
+                        } catch (Exception gone) { return; }
                     }
-                    thread.lastSeen = now; allRuntime += event.runtime; eventCount++; lastEventMs = now;
-                    if (event.core < 8) { totals[event.core] += event.runtime; thread.cores[event.core] += event.runtime; }
+                    thread.lastSeen = now; allRuntime += runtime; eventCount++; lastEventMs = now;
+                    if (core < 8) { totals[core] += runtime; thread.cores[core] += runtime; }
                 }
-            }
-        } catch (Exception failure) { if (!stopping) readerError = failure.toString(); }
     }
 
     private static final class LossStats {
@@ -320,6 +325,7 @@ public final class CoreCollector {
             catch (Exception ignored) {}
         }
         try { if (pipe != null) pipe.close(); } catch (Exception ignored) {}
+        statFiles.close();
         if (instance != null) instance.delete();
     }
     private static void cleanup(File owned) {
@@ -329,10 +335,40 @@ public final class CoreCollector {
         owned.delete();
     }
     static String read(File file) throws IOException {
-        try (FileInputStream input = new FileInputStream(file); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192]; int n;
-            while ((n = input.read(buffer)) != -1) { if (out.size() + n > CoreSnapshot.MAX_BYTES) throw new IOException("文件过大"); out.write(buffer, 0, n); }
-            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+        // app_process has no app initialization: use explicit descriptors rather
+        // than creating a CloseGuard/finalizable FileInputStream for every stat.
+        try (InputStream input = new NativeInput(file)) { return CollectorFileReader.read(input); }
+    }
+    private static int processId(String entry) {
+        int value = 0;
+        for (int i = 0; i < entry.length(); i++) {
+            int digit = entry.charAt(i) - '0';
+            if (digit < 0 || digit > 9 || value > (Integer.MAX_VALUE - digit) / 10) return -1;
+            value = value * 10 + digit;
+        }
+        return value;
+    }
+    private static final class NativeInput extends InputStream {
+        private FileDescriptor descriptor;
+        NativeInput(File file) throws IOException {
+            try { descriptor = Os.open(file.getPath(), OsConstants.O_RDONLY | OsConstants.O_CLOEXEC, 0); }
+            catch (android.system.ErrnoException error) { throw new IOException("Open failed: " + file, error); }
+        }
+        @Override public int read(byte[] buffer, int offset, int count) throws IOException {
+            if (count == 0) return 0;
+            for (;;) try {
+                int n = Os.read(descriptor, buffer, offset, count); return n == 0 ? -1 : n;
+            } catch (android.system.ErrnoException error) {
+                if (error.errno != OsConstants.EINTR) throw new IOException("Read failed", error);
+            }
+        }
+        @Override public int read() throws IOException {
+            byte[] one = new byte[1]; return read(one, 0, 1) < 0 ? -1 : one[0] & 255;
+        }
+        @Override public void close() throws IOException {
+            FileDescriptor closing = descriptor; descriptor = null;
+            if (closing != null) try { Os.close(closing); }
+            catch (android.system.ErrnoException error) { throw new IOException("Close failed", error); }
         }
     }
     private static void write(File file, String value) throws IOException {

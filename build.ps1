@@ -5,6 +5,7 @@
 #       and any non-ASCII byte in it corrupts the parse (see AGENTS.md section 8).
 
 $ErrorActionPreference = 'Stop'
+if (-not $env:QQWATCH_SIGN_PASSWORD) { throw 'Set QQWATCH_SIGN_PASSWORD locally before signing' }
 
 $root = 'D:\deepseek\qq-watchdog'
 $sdk  = 'D:\deepseek\_work\android-sdk'
@@ -44,7 +45,7 @@ if (-not (Test-Path $ks)) {
     Write-Host "[1/6] generating signing key"
     RunExe "$jh\bin\keytool.exe" @(
         '-genkeypair', '-keystore', $ks, '-alias', 'qqwatchdog',
-        '-storepass', 'qqwatchdog123', '-keypass', 'qqwatchdog123',
+        '-storepass:env', 'QQWATCH_SIGN_PASSWORD', '-keypass:env', 'QQWATCH_SIGN_PASSWORD',
         '-keyalg', 'RSA', '-keysize', '2048', '-validity', '3650',
         '-dname', 'CN=qqwatchdog,O=self,C=CN'
     ) 'keytool' | Out-Null
@@ -98,7 +99,7 @@ $zip.Dispose()
 Write-Host "[6/6] zipalign + sign"
 RunExe "$bt\zipalign.exe" @('-f', '-p', '4', $staging, "$out\aligned.apk") 'zipalign' | Out-Null
 RunExe "$bt\apksigner.bat" @(
-    'sign', '--ks', $ks, '--ks-pass', 'pass:qqwatchdog123', '--key-pass', 'pass:qqwatchdog123',
+    'sign', '--ks', $ks, '--ks-pass', 'env:QQWATCH_SIGN_PASSWORD', '--key-pass', 'env:QQWATCH_SIGN_PASSWORD',
     '--ks-key-alias', 'qqwatchdog', '--out', "$out\qqwatchdog.apk", "$out\aligned.apk"
 ) 'apksigner' | Out-Null
 RunExe "$bt\apksigner.bat" @('verify', '--print-certs', "$out\qqwatchdog.apk") 'verify' | Out-Null

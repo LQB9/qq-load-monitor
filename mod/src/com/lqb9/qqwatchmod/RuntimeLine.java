@@ -12,7 +12,9 @@ final class RuntimeLine {
             int left = line.lastIndexOf('[', event), right = line.indexOf(']', left);
             int pid = line.indexOf(" pid=", event), runtime = line.indexOf(" runtime=", event);
             if (left < 0 || right < 0 || pid < 0 || runtime < 0) return null;
-            int core = Integer.parseInt(line.substring(left + 1, right));
+            long parsedCore = number(line, left + 1, right);
+            if (parsedCore > 127) return null;
+            int core = (int) parsedCore;
             long id = number(line, pid + 5), ns = number(line, runtime + 9);
             if (core < 0 || core > 127 || id <= 0 || id > Integer.MAX_VALUE || ns < 0 || ns > 1000000000L) return null;
             return new RuntimeLine((int) id, core, ns);
@@ -20,6 +22,17 @@ final class RuntimeLine {
     }
     private static long number(String line, int start) {
         int end = start; while (end < line.length() && Character.isDigit(line.charAt(end))) end++;
-        return Long.parseLong(line.substring(start, end));
+        return number(line, start, end);
+    }
+    private static long number(String line, int start, int end) {
+        if (start == end) throw new NumberFormatException("Missing runtime number");
+        long value = 0;
+        for (int i = start; i < end; i++) {
+            int digit = line.charAt(i) - '0';
+            if (digit < 0 || digit > 9 || value > (Long.MAX_VALUE - digit) / 10)
+                throw new NumberFormatException("Invalid runtime number");
+            value = value * 10 + digit;
+        }
+        return value;
     }
 }

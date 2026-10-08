@@ -26,6 +26,10 @@ $sources += Join-Path $sourceDir 'ThreadLoadHistory.java'
 $sources += Join-Path $sourceDir 'QqTaskAdapter.java'
 $sources += Join-Path $PSScriptRoot 'tests\com\lqb9\qqwatchmod\QqTaskAdapterTest.java'
 $sources += Join-Path $PSScriptRoot 'tests\com\lqb9\qqwatchmod\TotalRuleTest.java'
+$sources += Join-Path $sourceDir 'ProcStat.java'
+$sources += Join-Path $sourceDir 'CollectorFileReader.java'
+$sources += Join-Path $sourceDir 'RuntimeStream.java'
+$sources += Join-Path $PSScriptRoot 'tests\com\lqb9\qqwatchmod\CollectorPerformanceTest.java'
 $sources += Join-Path $PSScriptRoot 'tests\com\lqb9\qqwatchmod\RuleMetadataTest.java'
 $sources += @(Get-ChildItem (Join-Path $PSScriptRoot 'test-fixtures') -Recurse -Filter *.java | ForEach-Object { $_.FullName })
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
@@ -62,6 +66,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Thread presentation-state tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Collector status and metadata tests failed' }
 & "$javaBin\java.exe" -cp $OutputDirectory com.lqb9.qqwatchmod.TotalRuleTest
 if ($LASTEXITCODE -ne 0) { throw 'Independent total switch and thread history tests failed' }
+& "$javaBin\java.exe" -cp $OutputDirectory com.lqb9.qqwatchmod.CollectorPerformanceTest
+if ($LASTEXITCODE -ne 0) { throw 'Collector parser and reader tests failed' }
 
 & "$javaBin\java.exe" --add-opens java.base/java.util.concurrent=ALL-UNNAMED -cp $OutputDirectory com.lqb9.qqwatchmod.QqTaskAdapterTest
 if ($LASTEXITCODE -ne 0) { throw 'QQ adapter identity tests failed' }

@@ -3,7 +3,29 @@
 > 给接手的人/AI：**本文件是唯一入口，读完就能继续**。
 > 沟通用**中文、短句、先结论**；用户**打不开 .md**，给他看的文档出单文件 HTML 放工作区（**别放桌面**）。
 
-## 0. 当前代码：v1.32 五版QQ任务适配（2026-10-03）
+## 0. 当前源码与安装：v1.34 应用图标重绘（2026-10-07，已按用户要求安装）
+
+- 用户要求与QQ增强采用各自功能图形和配色。负载监控用深色CPU芯片、青绿引脚与黄绿负载曲线；增强用紫色聊天气泡和金色星光，两套轮廓与颜色独立。
+- Manifest为1.34/vc35，增加roundIcon；ModuleInfo仅VERSION由1.33改1.34，其余原生产Java逐字节不变。新增背景/前景/monochrome原生矢量、v26/v33 adaptive资源，五档PNG更新；tools/mk_module_icon.py改为可重生成上述资源和SVG预览。应用内UI、采集器和负载处理实现未变。
+- 六阶段构建通过；APK mod/build/qqwatchmod.apk及QQ负载监控.apk，214443字节，SHA-256 942fad121ab2d78fbc27e90aa5f0ba629814b31d4241f6d35529e070855e5b06，原签名与本轮前1.33一致。badging核对包名/1.34/35、5档PNG像素及原生adaptive/monochrome资源通过。圈形及32/48/64px预览由矢量离线渲染并目视检查，真机桌面尚未验证。
+- 未连接/安装手机或重启QQ，本机安装仍1.33/vc34；未改设置、未发布GitHub/Drive。不得把以下1.33实机采样或测试称为1.34重新实测。
+- 用户交付D:/ChatGPT/2026-10-07/ban/outputs/QQ负载监控-v1.34-新图标.apk及共用APK图标预览.html/png；mod/build有版本副本，docs-html/QQ负载监控-v1.34-应用图标重绘.html有镜像。基线/证据D:/ChatGPT/2026-10-07/ban/work/icon-redesign/monitor与verification.json，不含签名密钥。
+
+- 用户随后要求“你安装我看下”，21:48 +0800已原签名安装1.34/vc35与增强1.86/vc186。两个手机base.apk哈希与本轮输出包相同，26个当前设置逐字节保留。QQ27372→31910，精确采集器27429→31923；3连续有效核心采样seq7→12，watchdog.1.log轮转文件确认v1.34 SESSION。未新增业务压力或处理效果测试。
+- 已删除远端临时安装APK和截图文件；装机证据D:/ChatGPT/2026-10-07/ban/work/icon-redesign/installation。用户打开的模块说明页显示v1.34，未操作设置；未制作桌面图标现场截图。以下构建阶段“未安装”句为前一回合历史，以本安装补充为准。
+
+- 2026-10-08按用户要求发布当前v1.34（包含1.33采集器优化），目标GitHub load-monitor-v1.34和原云盘备份；打包/回读证据位于D:/ChatGPT/2026-09-30/xu/work/v1.34-publish。发布完成以publication-result.json为准；本次不修改生产代码或手机设置。
+
+## 历史：v1.33 采集器优化（2026-10-07，安装基线）
+
+- 用户发现app_process PID18713为本模块CoreCollector，要求降低占用。本版新增ProcStat按需解析、CollectorFileReader线程独立可复用有界缓冲、ProcStatReader受FD软上限约束的pread缓存（逐秒读新值，扫描末清退，失败全量读回退）、RuntimeStream直接字节流解析。CoreCollector对非数字/proc项不再抛例外；按批更新时间仅用于lastSeen/诊断年龄，runtime及capture单调时间仍为实际值。
+- 每秒发现/CPU前后括读/capture/丢事件检查/原子发布，2秒前后台查询、UID筛选、会话generation、8核心统计、双规则时长和真实任务处理协议保持；QqCpuTracker/ThreadCpuTracker只替换parse实现，新增非负与溢出检查。5个原Java改变、4新增；其余原生产Java逐字节相同，UI未改。core-test/ui-test/test显式源码依赖同步，PS1 ASCII。
+- 1194JVM（568原+626解析/有界读取/并发/字节分片）通过；Android原生读容量/UTF8/FD平衡、缓存名称与CPU实时刷新/容量/线程退出/sweep通过。Thread.join须等待/proc实际退出再断言。3固定核心取得7有效样本，排除CPU2最小94.2%，最高总284.1%；byte reader用于实际生产采集器，loss=0。
+- 同一隔离测试进程600休眠worker、619线程、约1400事件/秒，旧→新→旧4×3秒各轮：9.61%/6.02%/14.98%，旧均12.29%，下降51.0%；旧两轮有波动，不泛化固定降幅。QQ安装前新采集器约830跟踪线程、1053事件/秒，平均9.08%（7.37—10.28%），6有效且无丢事件；与原动态场景不视为严格配对。故障后台47.9℃未复现，热因尚未确认。
+- 已原签名安装1.33/vc34，197638B，SHA256 73CF377CE4084B2FDB93619E99F7E83AA1E85C234A14DD44C77931881851D02C。QQ重新加载v1.33，原watchdog.load全文保持；安装后3个连续有效核心快照推进、QQ有效SAMPLE回读。安装后最新3窗口平均6.41%（5.82—7.19%），约461线程/615事件每秒，全有效无丢事件；不与升级前不同线程规模计算直接降幅。当前QQ9.3.70/16410，本版未新增其Job专用适配。故障任务真实停止/长时温升仍待观察。
+- outputs/QQ负载监控.apk、QQ负载监控-v1.33.apk、QQ负载监控-v1.33-采集器优化说明.html与SHA256SUMS；docs-html镜像。备份work/qq-watchdog-before-v1.33（生产源码+原1.32 APK，不含原QQ包/钥匙）；证据work/v1.33-collector-evidence、v1.33-core-device、v1.33-jvm-result.txt。collector_perf_v133/switch_collector_v133/bench_collector_v133/check_v133_core/install_collector_v133/finish_collector_v133脚本均在私有工作区。仅本地交付，本轮未发布GitHub/云盘。
+
+## 历史：v1.32 五版QQ任务适配（2026-10-03）
 
 - 用户要求手机下载目录5个新QQ包做负载规则。私有work/v1.32-qq-references：9.3.35/15560、9.3.50/15730、9.3.55/15900、9.3.60/16070、9.3.65/16240，全部QQ/arm64、签名一致、手机/PC SHA一致；不替换现用QQ9.2.85、不上传原包/DEX/私人日志。
 - QqTaskAdapter精确包/版名/版号配置（所有QQ进程attach，不只主进程），实际Job直继WeakReference、Runnable、唯一mJob、继承平台Reference.get、run签名、qfix字段验证；profile读取可用弱引用仅诊断，active必须强字段。非空redirector保守拒绝，不调用hasPatch/redirect等业务回调。
